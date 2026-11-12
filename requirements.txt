@@ -1,0 +1,2 @@
+# Runtime dependencies for solution/ (graded in a clean Python 3.11 environment).
+# The current baseline uses only the standard library.
