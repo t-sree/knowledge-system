@@ -1,0 +1,30 @@
+{"id": "dev-001", "category": "current_value", "question": "What's the current APY on a 12 month CD?", "must_include": ["3.40%"]}
+{"id": "dev-002", "category": "current_value", "question": "How much does a 60-month share certificate pay?", "must_include": ["1.80%"]}
+{"id": "dev-003", "category": "tier_disambiguation", "question": "What APY does the 17-month jumbo special certificate pay?", "must_include": ["4.20%"], "must_not_include": ["4.10%"]}
+{"id": "dev-004", "category": "tier_disambiguation", "question": "Auto loan APR for 72 months on a 2022 car?", "must_include": ["5.79%"]}
+{"id": "dev-005", "category": "tier_disambiguation", "question": "What is the APR on a 60 month personal loan?", "must_include": ["12.49%"]}
+{"id": "dev-006", "category": "tier_disambiguation", "question": "Personal loan rate for 24 months?", "must_include": ["9.99%"]}
+{"id": "dev-007", "category": "current_value", "question": "What's the dividend rate on Bright Savings?", "must_include": ["2.23%"]}
+{"id": "dev-008", "category": "tier_disambiguation", "question": "What APY does the Health Savings Account pay on a $12,000 balance?", "must_include": ["0.30%"]}
+{"id": "dev-009", "category": "tier_disambiguation", "question": "Investor's Choice Money Market rate for $30,000?", "must_include": ["0.35%"]}
+{"id": "dev-010", "category": "tier_disambiguation", "question": "What is the highest APY on the Investor's Choice Money Market?", "must_include": ["0.40%", "100,000"]}
+{"id": "dev-011", "category": "current_value", "question": "What is the HELOC rate?", "must_include": ["6.25%"]}
+{"id": "dev-012", "category": "tier_disambiguation", "question": "What's the APR on a 60-month boat loan for $15,000?", "must_include": ["7.89%"]}
+{"id": "dev-013", "category": "tier_disambiguation", "question": "RV loan APR for 72 months if I borrow $45,000?", "must_include": ["7.09%"]}
+{"id": "dev-014", "category": "tier_disambiguation", "question": "What is the APR for a 48 month ATV loan on a 2022 model year?", "must_include": ["8.54%"]}
+{"id": "dev-015", "category": "tier_disambiguation", "question": "What is the intro balance transfer APR on the Platinum Visa?", "must_include": ["2.90%"]}
+{"id": "dev-016", "category": "temporal_as_of", "question": "What was the APY on the 10-month fixed certificate special?", "as_of": "2026-06-30", "must_include": ["3.80%"]}
+{"id": "dev-017", "category": "temporal_as_of", "question": "What APY did the 17-month jumbo certificate special pay?", "as_of": "2026-06-15", "must_include": ["3.95%"]}
+{"id": "dev-018", "category": "temporal_as_of", "question": "What APY did the 17-month jumbo certificate special pay?", "as_of": "2026-09-01", "must_include": ["4.05%"]}
+{"id": "dev-019", "category": "temporal_as_of", "question": "What was the 30-year fixed purchase mortgage rate for loans of $832,750 or less?", "as_of": "2026-05-15", "must_include": ["6.125%"]}
+{"id": "dev-020", "category": "temporal_as_of", "question": "What was the 30-year fixed purchase mortgage rate for loans of $832,750 or less in June 2026?", "must_include": ["6.375%"]}
+{"id": "dev-021", "category": "should_refuse", "question": "What is the rate on a 5/1 adjustable rate mortgage?"}
+{"id": "dev-022", "category": "should_refuse", "question": "What's the APY on a 9-month certificate?"}
+{"id": "dev-023", "category": "should_refuse", "question": "What is the jumbo rate on a 60-month certificate?"}
+{"id": "dev-024", "category": "should_refuse", "question": "What was the 6-month certificate rate?", "as_of": "2025-12-31"}
+{"id": "dev-025", "category": "entity_attribution", "question": "What ABA routing number should I give my employer for direct deposit?", "must_include": ["273974581"]}
+{"id": "dev-026", "category": "tier_disambiguation", "question": "What are the business share savings rates?", "must_include": ["0.20%"]}
+{"id": "dev-027", "category": "current_value", "question": "Business certificate APY for 6 months?", "must_include": ["3.40%"]}
+{"id": "dev-028", "category": "tier_disambiguation", "question": "What is the lowest Share Savings dividend rate tier?", "must_include": ["0.00%"]}
+{"id": "dev-029", "category": "current_value", "question": "What's the 15-year fixed mortgage rate?", "must_include": ["6.75%"]}
+{"id": "dev-030", "category": "list_completeness", "question": "What are all your certificate terms and APYs?", "must_include": ["1.80%", "3.40%", "4.10%"]}

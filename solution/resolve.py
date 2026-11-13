@@ -40,7 +40,7 @@ AUTHORITY = {
 _LAST = 99
 EXTRACTOR_RANK = {"table": 0, "kv": 1, "prose": 2}
 CRITERIA = ("source authority", "content date", "present in the view", "newer snapshot", "rate sheet first",
-            "extractor", "url")
+            "more pages agree", "extractor", "url")
 
 
 def attribute_class(attribute: str) -> str:
@@ -100,7 +100,8 @@ class Resolution:
         return self.winner.sighting.fact if self.winner else None
 
 
-def rank_tuple(vs) -> tuple:
+def rank_tuple(vs, support: int = 0) -> tuple:
+    """Sort key, lower is better. `support` = number of present pages stating the same value."""
     s = vs.sighting
     cls = attribute_class(s.fact.attribute)
     return (AUTHORITY[cls].get(s.page_type, _LAST),
@@ -108,6 +109,7 @@ def rank_tuple(vs) -> tuple:
             0 if vs.present else 1,
             -s.snapshot_index,
             0 if s.page_type == "rate_sheet" else 1,     # equal evidence: cite the rate sheet
+            -support,                                     # then the value more present pages agree on
             EXTRACTOR_RANK.get(s.fact.extractor, 9),
             s.url)
 
@@ -139,7 +141,11 @@ def resolve(key: tuple, sightings: list, reference_date: str) -> Resolution:
     if not eligible:
         res.reason = "no eligible sighting" + (f" ({len(res.disqualified)} disqualified)" if res.disqualified else "")
         return res
-    eligible.sort(key=rank_tuple)
+    support = {}
+    for vs in eligible:
+        pages = {o.sighting.page_key for o in eligible if o.present and same_value(o.sighting.fact, vs.sighting.fact)}
+        support[id(vs)] = len(pages)
+    eligible.sort(key=lambda v: rank_tuple(v, support[id(v)]))
     res.winner = eligible[0]
     wf = res.winner.sighting.fact
     for vs in eligible[1:]:
@@ -147,7 +153,7 @@ def resolve(key: tuple, sightings: list, reference_date: str) -> Resolution:
     res.reason = "winner: " + _describe(res.winner)
     if res.disagreeing:
         loser = res.disagreeing[0]
-        wt, lt = rank_tuple(res.winner), rank_tuple(loser)
+        wt, lt = rank_tuple(res.winner, support[id(res.winner)]), rank_tuple(loser, support[id(loser)])
         crit = next((CRITERIA[i] for i in range(len(wt)) if wt[i] != lt[i]), "tie")
         res.reason += f"; beats {loser.sighting.fact.value!r} on {crit} ({_describe(loser)})"
     if res.disqualified:

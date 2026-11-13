@@ -283,6 +283,7 @@ class Fact:
     block_index: int
     effective: Optional[str] = None       # "rates effective" date that belongs to this table/block
     expires: Optional[str] = None         # end date stated in the same block
+    label: str = ""                       # the row / line label as written on the page
 
     @property
     def key(self) -> tuple:
@@ -438,7 +439,8 @@ def _table_facts(block: Block, context, title, acct_default) -> list[Fact]:
                     quals = _merge_quals(lp.qualifiers, ctx_quals, acct_default,
                                          (("variant", (lp.product,)),) if lp.product else ())
                 quote = f"{header_line} || {row_label} | {col}: {val}"
-                facts.append(_fact(prod, attr, quals, val, "table", quote, context, block.index))
+                facts.append(_fact(prod, attr, quals, val, "table", quote, context, block.index,
+                                   label=f"{row_label} ({col})"))
         return facts
 
     if n_attr == 0:
@@ -488,13 +490,17 @@ def _table_facts(block: Block, context, title, acct_default) -> list[Fact]:
                 quals = _merge_quals(lp.qualifiers, extra, ctx_quals)
         quals = _merge_quals(tuple(row_quals.items()), quals, acct_default)
         row_line = " | ".join(cells)
+        # Human-readable row label: the label cell plus any qualifier cells not already in it.
+        qual_cells = [cells[i] for i, (k, _) in enumerate(kinds) if k == "qual" and i < len(cells)
+                      and cells[i] and cells[i] != label_text]
+        row_label_text = " · ".join([c for c in [label_text] + qual_cells if c])
         for i, (k, a) in enumerate(kinds):
             if k == "attr" and i < len(cells) and cells[i]:
                 cell_attr = attribute_of(cells[i])            # a unit written in the cell beats the header
                 attr = cell_attr if cell_attr in ("apr", "apy") else a
                 quote = f"{header_line} || {row_line}"
                 facts.append(_fact(prod, attr, _merge_quals(header_quals[i], quals), cells[i], "table",
-                                   quote, context, block.index))
+                                   quote, context, block.index, label=row_label_text))
     return facts
 
 
@@ -502,10 +508,11 @@ def _drop(quals, name):
     return tuple((k, v) for k, v in quals if k != name)
 
 
-def _fact(product, attr, quals, value, extractor, quote, context, block_index) -> Fact:
+def _fact(product, attr, quals, value, extractor, quote, context, block_index, label="") -> Fact:
     return Fact(product=product, product_key=product_key(product), attribute=attr,
                 qualifiers=tuple(sorted(quals)), value=value, numbers=parse_numbers(value),
-                extractor=extractor, quote=quote[:400], context=context, block_index=block_index)
+                extractor=extractor, quote=quote[:400], context=context, block_index=block_index,
+                label=label)
 
 
 # ---------------------------------------------------------------- key-value lines and prose
@@ -531,7 +538,8 @@ def _kv_facts(block: Block, context, title, acct_default) -> list[Fact]:
         ctx_prod, ctx_quals = context_product(context, title)
         if attr in _SITE_ATTRIBUTES and not (lp.product and is_product_phrase(label)):
             prod, quals = "", acct_default                  # identifiers of the institution itself
-            facts.append(_fact(prod, attr, quals, value, "kv", " ".join(line.split()), context, block.index))
+            facts.append(_fact(prod, attr, quals, value, "kv", " ".join(line.split()), context, block.index,
+                               label=label))
             continue
         if attr is None:
             # The label itself names the attribute ("Phone", "Hours"). Values with a rate in them are
@@ -553,7 +561,8 @@ def _kv_facts(block: Block, context, title, acct_default) -> list[Fact]:
             extra = (("variant", tuple(lp.product.split())),) if lp.product else ()
             prod, quals = ctx_prod, _merge_quals(lp.qualifiers, extra, ctx_quals)
         quals = _merge_quals(quals, acct_default)
-        facts.append(_fact(prod, attr, quals, value, "kv", " ".join(line.split()), context, block.index))
+        facts.append(_fact(prod, attr, quals, value, "kv", " ".join(line.split()), context, block.index,
+                           label=label))
     return facts
 
 
@@ -620,7 +629,7 @@ def _prose_facts(block: Block, context, title, acct_default, skip_lines: set[str
             if unit:
                 value += f" {unit.upper()}"
             quote = plain[max(0, m.start() - 120): max(m.end(), range_end) + 60]
-            facts.append(_fact(prod, attr, quals, value, "prose", quote, context, block.index))
+            facts.append(_fact(prod, attr, quals, value, "prose", quote, context, block.index, label=label))
     return facts
 
 
