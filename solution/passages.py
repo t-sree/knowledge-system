@@ -156,6 +156,8 @@ class PassageIndex:
         self.df: dict[str, int] = defaultdict(int)
         self._block_chunks: dict[str, list[int]] = {}        # block key -> chunk ids
         self.total_len = 0
+        self.vecs = None                                      # chunk embeddings (rows = chunk ids)
+        self._embedded = 0
 
     def add_snapshot(self, rec) -> None:
         for page_key in rec.members:
@@ -221,11 +223,46 @@ class PassageIndex:
         n = max(1, len(self.chunks))
         return math.log(1 + (n - self.df.get(t, 0) + 0.5) / (self.df.get(t, 0) + 0.5))
 
-    def search(self, query_tokens: list[str], index: int, k: int = 8, accept=None):
-        """Top chunks visible in view `index`: (score, coverage, chunk, best ViewEntry, block idx).
-        `accept(chunk_text)` filters candidates before ranking (pattern evidence such as a count)."""
+    # ------------------------------------------------------------------ embeddings
+    def embed_pending(self, llm) -> None:
+        """Embed chunks added since the last call (page title + chunk text). Skipped without an LLM."""
+        if llm is None or not llm.enabled:
+            return
+        start = self._embedded
+        if start >= len(self.chunks):
+            return
+        texts = []
+        for c in self.chunks[start:]:
+            title = ""
+            if c.occurrences:
+                pk, si, _ = c.occurrences[0]
+                for v in self.store.versions.get(pk, ()):
+                    if v.snapshot_index == si:
+                        title = v.title.split("|")[0].strip()
+                        break
+            texts.append(f"{title}\n{c.text}" if title else c.text)
+        m = llm.embed(texts)
+        if m is None:
+            return                                      # dense search stays off for these chunks
+        np = llm.np
+        self.vecs = m if self.vecs is None else np.vstack([self.vecs, m])
+        self._embedded = len(self.chunks)
+
+    def dense(self, qvec, n: int = 80) -> dict[int, float]:
+        """Cosine similarity of the n nearest embedded chunks."""
+        if qvec is None or self.vecs is None:
+            return {}
+        sims = self.vecs @ qvec
+        n = min(n, len(sims))
+        top = sims.argpartition(-n)[-n:]
+        return {int(i): float(sims[i]) for i in top}
+
+    def search(self, query_tokens: list[str], index: int, k: int = 8, accept=None, qvec=None):
+        """Top chunks visible in view `index`: (score, coverage, chunk, best ViewEntry, block idx, cosine).
+        `accept(chunk_text)` filters candidates before ranking (pattern evidence such as a count).
+        With `qvec` (question embedding) the nearest chunks by meaning join the keyword candidates."""
         q = [t for t in dict.fromkeys(query_tokens) if t not in STOP]
-        if not q or not self.chunks:
+        if (not q and qvec is None) or not self.chunks:
             return []
         view = self.store.view(index)
         avg = self.total_len / max(1, len(self.chunks))
@@ -249,6 +286,12 @@ class PassageIndex:
         if accept is not None:
             ranked = [(cid, s) for cid, s in sorted(scores.items(), key=lambda x: -x[1])
                       if accept(self.chunks[cid].text)][: k * 40]
+        near = self.dense(qvec)
+        if near:
+            have = {cid for cid, _ in ranked}
+            ranked += [(cid, scores.get(cid, 0.0)) for cid in near
+                       if cid not in have and (accept is None or accept(self.chunks[cid].text))]
+        max_s = max((s for _, s in ranked), default=0.0) or 1.0
         for cid, s in ranked:
             c = self.chunks[cid]
             best = None
@@ -265,12 +308,21 @@ class PassageIndex:
             if best is None:
                 continue
             coverage = matched[cid] / total_idf
-            final = s * best[0][0] * (0.3 + 0.7 * coverage)
+            cos = near.get(cid)
+            if cos is None and near and self.vecs is not None and cid < len(self.vecs):
+                cos = float(self.vecs[cid] @ qvec)
+            if near:
+                # Hybrid: keyword relevance (scaled to 0..1) and meaning similarity.
+                lexical = (s / max_s) * (0.3 + 0.7 * coverage)
+                meaning = min(1.0, max(0.0, ((cos or 0.0) - 0.25) / 0.45))
+                final = best[0][0] * (0.6 * lexical + 0.4 * meaning)
+            else:
+                final = s * best[0][0] * (0.3 + 0.7 * coverage)
             # A statement repeated on many present pages is the site's standing statement (small boost).
             pages = {pk for pk, si, _ in c.occurrences if (e := view.get(pk)) is not None
                      and e.present and e.version.snapshot_index == si}
             final *= 1.0 + 0.08 * math.log1p(len(pages))
-            out.append((final, coverage, c, best[1], best[2]))
+            out.append((final, coverage, c, best[1], best[2], cos or 0.0))
         out.sort(key=lambda x: -x[0])
         return out[:k]
 
@@ -288,6 +340,27 @@ _CAP_WORD = re.compile(r"(?<![\w$])([A-Z][\w$’'-]*[A-Za-z0-9])")
 _MONTH_NAMES = {"january", "february", "march", "april", "may", "june", "july", "august", "september",
                 "october", "november", "december"}
 MIN_COVERAGE = 0.45
+# gpt-4o-mini composition of passage answers. Measured on the public + dev sets it did not beat the
+# extractive answers (0.868 "always" / 0.846 "weak" vs 0.884 "never") and added ~1 s, so it is off by
+# default. Kept for a judge-scored run: set to "always" or "weak".
+COMPOSE_MODE = "never"
+STRONG_COVERAGE = 0.8       # extractive answer kept as is when the best passage covers this much of the question
+DENSE_OK = 0.55             # cosine above which a passage counts as on-topic even with few shared words
+COMPOSE_PASSAGES = 6
+COMPOSE_TIMEOUT = 4.0
+COMPOSE_SYSTEM = (
+    "You answer member questions for Dupaco Community Credit Union using ONLY the website excerpts "
+    "provided. Rules:\n"
+    "- Use only facts stated in the excerpts. Never add facts, numbers, phone numbers or advice that "
+    "are not in them.\n"
+    "- Copy numbers, dates, times, addresses, names and URLs exactly as written in the excerpts.\n"
+    "- If the excerpts do not answer the question, reply with exactly: NOT_FOUND\n"
+    "- If excerpts disagree, prefer the most recent dated excerpt and state that value.\n"
+    "- When details vary (for example hours by branch), say so and give the values with what they "
+    "apply to.\n"
+    "- Be brief: one to three sentences, or a short list. Plain text, no markdown headings.\n"
+    "- After each fact, cite the excerpt number in square brackets, like [1]."
+)
 _DATE_NAMES = _MONTH_NAMES | {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "today"}
 _ATTR_WORDS = {"hours": ("hours", "hour", "open", "time", "times"), "address": ("address", "located", "location"),
                "phone": ("phone", "number", "call")}
@@ -376,15 +449,16 @@ class PassageAnswerer:
             if any(not pt.search(text) for pt in evidence):
                 return False
             return not counting or _has_count(text, qset)
+        qvec = self.ks.question_vector(q.text)
         # Questions that need such evidence look at a wider pool, filtered before ranking.
-        results = idx.search(query, index, k=40 if strict else 15, accept=accept if strict else None)
+        results = idx.search(query, index, k=40 if strict else 15, accept=accept if strict else None, qvec=qvec)
         if not results:
             return self._refusal()
         common = {stem(w) for w in STOP | {"dupaco", "branch", "branches", "visa", "credit", "union"}}
         names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
 
         def evident(r):
-            _, _, c, entry, _ = r
+            c, entry = r[2], r[3]
             ctoks = set(tokens(c.text))
             title_toks = set(tokens(entry.version.title))
             if any(n not in ctoks and n not in title_toks for n in names):
@@ -398,7 +472,9 @@ class PassageAnswerer:
         def ok(r):
             if not evident(r):
                 return False
-            _, cov, c, entry, _ = r
+            cov, c, entry, cos = r[1], r[2], r[3], r[5]
+            if cos >= DENSE_OK:
+                return True                      # close in meaning even with few shared words
             ctoks = set(tokens(c.text))
             title_toks = set(tokens(entry.version.title))
             # words found only in the page title count half
@@ -409,6 +485,28 @@ class PassageAnswerer:
         good = [r for r in results if ok(r)]
         if not good:
             return self._refusal()
+        picks = self._picks(q, good, results, names, evident)
+        parts = [self._part(r, query) for r in picks]
+        text = "\n\n".join(p for p in parts if p)
+        sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
+                   for r in picks]
+
+        # gpt-4o-mini writes the answer from the best passages; checked against them before use.
+        llm = self.ks.llm
+        mode = getattr(self, "compose_mode", COMPOSE_MODE)   # "never" | "weak" | "always"
+        weak = good[0][1] < STRONG_COVERAGE or bool(_COMPARE.search(q.text))
+        if llm is not None and llm.enabled and (mode == "always" or mode == "weak" and weak):
+            composed = self._compose(q, good, picks, query, snapshot_date)
+            if composed == "NOT_FOUND":
+                return self._refusal()
+            if composed is not None:
+                text, sources = composed
+        if past:
+            text = f"As of {snapshot_date}: " + text
+        return Answer(text=text, sources=sources, confident=True)
+
+    # ------------------------------------------------------------------ picking passages
+    def _picks(self, q, good, results, names, evident):
         best = good[0]
         picks = [best]
         # A second chunk of the same page (the definition next to the best-matching sentence) ...
@@ -419,8 +517,8 @@ class PassageAnswerer:
         if same is not None:
             picks.append(same)
         # ... and the best chunk of another page when it is nearly as good. Comparison questions
-        # ("do all branches keep the same hours?") gather up to three pages.
-        # Hours / address / phone without a named branch vary by branch: show several, like a comparison.
+        # ("do all branches keep the same hours?") and hours / address / phone without a named branch
+        # (they vary by branch) gather up to three pages.
         comparing = bool(_COMPARE.search(q.text)) or ((q.attribute or "") in EVIDENCE and not names)
         others, used = (2, 0.4) if comparing else (1, 0.75)
         seen_pages = {best[3].version.key}
@@ -433,38 +531,68 @@ class PassageAnswerer:
                 seen_pages.add(r[3].version.key)
                 others -= 1
         # same-page chunks in page order
-        picks = sorted(picks[:1 + (same is not None)], key=lambda r: r[4]) + picks[1 + (same is not None):]
-        parts = []
-        for r in picks:
-            part = self._extract(r[2].text, query)
-            blocks = r[3].version.blocks
-            # A short line ("Lobby Monday-Thursday: 8:30 a.m.-5 p.m."): add the short lines after it.
-            if len(part) < 150 and not r[2].run:
-                extra = []
-                for b in blocks[r[4] + 1: r[4] + 8]:
-                    t = display_text(b.text)
-                    if (not t or len(t) > 150 or b.heading_path != blocks[r[4]].heading_path
-                            or _SECTION_START.match(b.text) or t.isupper() or t.endswith(":")):
-                        break
-                    extra.append(t)
-                if extra:
-                    part = "\n".join([part] + extra)
-            # A FAQ question: its answer is the next block of the page.
-            if part.rstrip().endswith("?") or part.rstrip().rstrip(")").rstrip("#").endswith("?"):
-                blocks = r[3].version.blocks
-                if r[4] + 1 < len(blocks):
-                    nxt = display_text(blocks[r[4] + 1].text)
-                    if nxt:
-                        part = f"{part}\n{nxt[:600]}"
-            parts.append(part)
-        text = "\n\n".join(p for p in parts if p)
-        if past:
-            text = f"As of {snapshot_date}: " + text
-        sources = []
-        for r in picks:
+        n_same = 1 + (same is not None)
+        return sorted(picks[:n_same], key=lambda r: r[4]) + picks[n_same:]
+
+    def _part(self, r, query) -> str:
+        """Text of one picked chunk: best sentences, plus the short lines after a short line and the
+        answer block after a FAQ question."""
+        part = self._extract(r[2].text, query)
+        blocks = r[3].version.blocks
+        if len(part) < 150 and not r[2].run:
+            extra = []
+            for b in blocks[r[4] + 1: r[4] + 8]:
+                t = display_text(b.text)
+                if (not t or len(t) > 150 or b.heading_path != blocks[r[4]].heading_path
+                        or _SECTION_START.match(b.text) or t.isupper() or t.endswith(":")):
+                    break
+                extra.append(t)
+            if extra:
+                part = "\n".join([part] + extra)
+        if part.rstrip().rstrip(")").rstrip("#").endswith("?") and r[4] + 1 < len(blocks):
+            nxt = display_text(blocks[r[4] + 1].text)
+            if nxt:
+                part = f"{part}\n{nxt[:600]}"
+        return part
+
+    # ------------------------------------------------------------------ LLM composition
+    def _compose(self, q, good, picks, query, snapshot_date):
+        """(text, sources) from gpt-4o-mini, "NOT_FOUND", or None to keep the extractive answer."""
+        from contract import Source
+        excerpts, seen = [], set()
+        for r in list(picks) + list(good):
+            if len(excerpts) >= COMPOSE_PASSAGES:
+                break
+            if r[2].text in seen:
+                continue
+            seen.add(r[2].text)
+            excerpts.append((r, self._part(r, query) if r in picks else r[2].text))
+        lines = []
+        for i, (r, t) in enumerate(excerpts, 1):
             v = r[3].version
-            sources.append(Source(url=v.url, snapshot_id=v.snapshot_id, quote=r[2].text[:200]))
-        return Answer(text=text, sources=sources, confident=True)
+            info = v.info
+            date = (info.content_date if info is not None else None) or "undated"
+            ptype = info.page_type if info is not None else "page"
+            lines.append(f"[{i}] {v.title.split('|')[0].strip()} ({ptype}, {date}, {v.url})\n{t[:900]}")
+        user = (f"Question: {q.text}\nToday's date for this question: {snapshot_date}\n\n"
+                "Website excerpts:\n\n" + "\n\n".join(lines))
+        out = self.ks.llm.chat(COMPOSE_SYSTEM, user, max_tokens=260, timeout=COMPOSE_TIMEOUT)
+        if not out:
+            return None
+        if out.strip().upper().startswith("NOT_FOUND"):
+            return "NOT_FOUND"
+        cited = [int(n) for n in re.findall(r"\[(\d+)\]", out) if 0 < int(n) <= len(excerpts)]
+        text = re.sub(r"\s*\[\d+(?:,\s*\d+)*\]", "", out).strip()
+        # Every number in the answer must appear in the excerpts it was given.
+        source_text = " ".join(t for _, t in excerpts).replace(",", "")
+        for m in re.finditer(r"\d+(?:[.,:]\d+)*", text):
+            n = m.group(0).replace(",", "")
+            if n not in source_text:
+                return None
+        use = [excerpts[i - 1][0] for i in dict.fromkeys(cited)] or [excerpts[0][0]]
+        sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
+                   for r in use[:4]]
+        return text, sources
 
     @staticmethod
     def _extract(text: str, query: list[str]) -> str:

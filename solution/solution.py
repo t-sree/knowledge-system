@@ -18,6 +18,7 @@ from contract import Answer, Conflict, Snapshot  # noqa: E402
 from answer import RATE_ATTRS, FactAnswerer  # noqa: E402
 from classify import PageClassifier  # noqa: E402
 from facts import FactHistory  # noqa: E402
+from llm import LLM  # noqa: E402
 from resolve import Resolver  # noqa: E402
 from store import PageStore  # noqa: E402
 from passages import PassageAnswerer, PassageIndex  # noqa: E402
@@ -38,6 +39,9 @@ class KnowledgeSystem:
         self.fact_answerer = FactAnswerer(self)
         self.passages = PassageIndex(self.store)
         self.passage_answerer = PassageAnswerer(self)
+        # OpenAI is optional: checked once here; without a key everything runs on rules.
+        self.llm = LLM()
+        self._qvecs: dict = {}
         self._cache: dict = {}
         self.answer_errors = 0
         self.passage_errors = 0
@@ -58,6 +62,20 @@ class KnowledgeSystem:
             self.vocab.ensure()          # built at ingest so questions don't pay for it
         except Exception:
             pass
+        try:
+            self.passages.embed_pending(self.llm)
+        except Exception:
+            self.passage_errors += 1
+
+    def question_vector(self, text: str):
+        """Embedding of a question (cached), or None without an LLM."""
+        if not self.llm.enabled:
+            return None
+        key = " ".join((text or "").lower().split())
+        if key not in self._qvecs:
+            m = self.llm.embed([text], timeout=3.0)
+            self._qvecs[key] = m[0] if m is not None else None
+        return self._qvecs[key]
 
     # ------------------------------------------------------------------ I: view selector
     def select_view(self, ref_date):
