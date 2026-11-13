@@ -3,7 +3,8 @@
 ## Status
 
 Answers rate / fee questions from extracted facts and everything else from passage search over the
-selected snapshot. `conflicts()` is not implemented yet (returns `[]`).
+selected snapshot. `conflicts()` lists contradictions found within each snapshot (selftest conflicts
+F1 1.0, resolution 1.0; 19 conflicts on the public snapshots).
 
 Local results (public eval, no judge): final score 0.871 with `OPENAI_API_KEY`, 0.859 without.
 p95 latency about 0.4 s; ingest about 40 s with embeddings, about 15–25 s without.
@@ -47,7 +48,19 @@ p95 latency about 0.4 s; ingest about 40 s with embeddings, about 15–25 s with
 5. Answers are cached per (question, as_of).
 
 **Fact timeline** (`timeline.py`) gives each fact's value per snapshot as periods (for "what was it in
-May" and for conflicts).
+May").
+
+**Conflicts** (`conflicts.py`), computed per snapshot at ingest. A contradiction is two pages online at
+the same time (same snapshot) stating different values for the same fact; a value that simply changes
+from one snapshot to the next is an update and is not listed.
+- Rates and fees: same attribute, term, variants and account type; product names where one contains
+  the other ("auto loan" / "auto & motorcycle loan"); tier or model-year bands equal, or the most
+  overlapping band when a page uses shifted bands (a calculator's "2023–26" vs the rate sheet's
+  "2024–27"). The winner and reason come from the same resolver as `answer()`. Pages saying an offer
+  has ended count as out of date. One entry per topic (product + attribute + term + variants); tiers and
+  snapshots fold into it.
+- Counts in standard paragraphs repeated across press releases ("over 600 employees and 23 branch office
+  locations"): versions of the same paragraph with different numbers; the newest page wins.
 
 ## API keys
 

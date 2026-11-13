@@ -70,6 +70,7 @@ _STOP = {"the", "a", "an", "of", "for", "to", "our", "your", "dupaco", "with", "
 
 # ---------------------------------------------------------------- value patterns
 _FOOTNOTE = re.compile(r"(%|\bAPR|\bAPY|\))(\d{1,2})(?=\s|$|\||\*|,|\))")
+_TRAILING_FOOTNOTE = re.compile(r"(%|\bAPR|\bAPY)\s+\d$")    # a footnote digit after a space, at the very end
 _MD_NOISE = re.compile(r"\\([*_#|])")
 _NUM = re.compile(r"(?P<cur>\$)?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?P<pct>\s?%)?")
 _TERM = re.compile(r"\b(\d{1,3})\s*[- ]?\s*(month|mo|year|yr)s?\b", re.I)
@@ -104,7 +105,8 @@ def clean_cell(text: str) -> str:
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
     t = _FOOTNOTE.sub(r"\1", t)
     t = t.replace("**", "").replace("*", "")
-    return " ".join(t.split()).strip()
+    t = " ".join(t.split()).strip()
+    return _TRAILING_FOOTNOTE.sub(r"\1", t)          # "15.50% 1" -> "15.50%"
 
 
 def parse_numbers(text: str) -> tuple[tuple[float, str], ...]:

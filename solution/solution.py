@@ -17,6 +17,7 @@ from contract import Answer, Conflict, Snapshot  # noqa: E402
 
 from answer import RATE_ATTRS, FactAnswerer  # noqa: E402
 from classify import PageClassifier  # noqa: E402
+from conflicts import ConflictRegister  # noqa: E402
 from facts import FactHistory  # noqa: E402
 from llm import LLM  # noqa: E402
 from resolve import Resolver  # noqa: E402
@@ -41,6 +42,7 @@ class KnowledgeSystem:
         self.passage_answerer = PassageAnswerer(self)
         # OpenAI is optional: checked once here; without a key everything runs on rules.
         self.llm = LLM()
+        self.register = ConflictRegister(self)
         self._qvecs: dict = {}
         self._cache: dict = {}
         self.answer_errors = 0
@@ -66,6 +68,7 @@ class KnowledgeSystem:
             self.passages.embed_pending(self.llm)
         except Exception:
             self.passage_errors += 1
+        self.register.add_view(rec.index)       # contradictions within this snapshot (G)
 
     def question_vector(self, text: str):
         """Embedding of a question (cached), or None without an LLM."""
@@ -128,7 +131,10 @@ class KnowledgeSystem:
             return FactAnswerer._refusal(q)
 
     def conflicts(self):
-        return []
+        try:
+            return self.register.conflicts()
+        except Exception:
+            return []
 
 
 def build():
