@@ -1,7 +1,8 @@
 """
 Knowledge system for the credit-union snapshot hackathon.
 
-Build status: page store (A), page classifier (B), fact extractor (C) and fact history (D) are in place. `answer()` is still the
+Build status: page store (A), page classifier (B), fact extractor (C), fact history (D),
+resolver (E) and fact timeline (F) are in place. `answer()` is still the
 starter's naive paragraph search and `conflicts()` returns nothing; both are replaced as the
 remaining components land.
 """
@@ -15,7 +16,9 @@ from contract import Answer, Conflict, Snapshot, Source  # noqa: E402
 
 from classify import PageClassifier  # noqa: E402
 from facts import FactHistory  # noqa: E402
+from resolve import Resolver  # noqa: E402
 from store import PageStore  # noqa: E402
+from timeline import Timeline  # noqa: E402
 
 WORD = re.compile(r"[a-z0-9$%.]+")
 
@@ -26,6 +29,8 @@ class KnowledgeSystem:
         self.classifier = PageClassifier()
         self.classify_errors = 0
         self.facts = FactHistory(self.store)
+        self.resolver = Resolver(self.facts)
+        self.timeline = Timeline(self.resolver)
         self.pages = {}  # url -> (snapshot_id, markdown); used by the interim naive answer()
 
     def ingest(self, snapshot: Snapshot) -> None:

@@ -39,7 +39,7 @@ _ATTRIBUTE_PHRASES = [
     ("maximum balance", "max_balance"), ("max balance", "max_balance"),
     ("payment example", "payment_example"), ("monthly payment", "monthly_payment"),
     ("routing number", "routing_number"), ("phone", "phone"), ("address", "address"),
-    ("points", "points"), ("fees", "fee"), ("fee", "fee"), ("rate", "rate"),
+    ("points", "points"), ("fees", "fee"), ("fee", "fee"), ("rates", "rate"), ("rate", "rate"),
 ]
 # Column headers that carry qualifiers or the row label rather than an attribute.
 _QUALIFIER_HEADERS = [
@@ -57,7 +57,8 @@ _VARIANT_PHRASES = [
     "secured", "new", "used", "student", "youth", "senior",
 ]
 _VARIANT_CANON = {"intro": "introductory", "refi": "refinance"}
-_ACCOUNT_TYPES = ("business", "personal")
+# Only "business" splits facts: "personal" is part of product names ("personal loan") and is the default.
+_ACCOUNT_TYPES = ("business",)
 
 # Nouns that make a phrase name a product (used to decide label vs context).
 _PRODUCT_NOUNS = ("certificate", "cd", "savings", "saving", "checking", "loan", "mortgage", "visa", "card",
@@ -73,7 +74,12 @@ _MD_NOISE = re.compile(r"\\([*_#|])")
 _NUM = re.compile(r"(?P<cur>\$)?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?P<pct>\s?%)?")
 _TERM = re.compile(r"\b(\d{1,3})\s*[- ]?\s*(month|mo|year|yr)s?\b", re.I)
 _MODEL_YEAR = re.compile(r"\b((?:19|20)\d{2})(?:\s*[-–]\s*(\d{2,4}))?\s*model\s*years?(\s*\(and older\)|\s*and older)?", re.I)
-_MONEY_RANGE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*(?:[-–]|to)\s*\$\s?([\d,]+(?:\.\d+)?)")
+# Label-first form: "Model Year 2026-23", "Model Years 2019 and older".
+_MODEL_YEAR_FIRST = re.compile(r"\bmodel\s*years?\s*((?:19|20)\d{2})(?:\s*[-–]\s*(\d{2,4}))?(\s*\(and older\)|\s*and older)?", re.I)
+# Column headers that split one attribute into an introductory and an after-promotion value.
+_HEADER_AFTER_PROMO = re.compile(r"\b(?:after|following)\b.*\b(?:promo|promotional|intro|introductory)\b", re.I)
+_HEADER_INTRO = re.compile(r"\b(?:promo|promotional|intro|introductory)\b|\b(?:1st|first)\s+\d+\s+months?\b", re.I)
+_MONEY_RANGE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*(?:[-–]|to)\s*\$?\s?([\d,]+(?:\.\d+)?)")   # "$10,000-24,999" too
 _MONEY_UP = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*(?:\+|or more|and up|and above|or greater)", re.I)
 _MONEY_DOWN = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*(?:or less|and under|or below)", re.I)
 _TABLE_LINE = re.compile(r"^\s*\|")
@@ -141,6 +147,8 @@ def _singular(tok: str) -> str:
 def product_key(name: str) -> str:
     """Normalised product identity: lower case, no stop words, simple singulars."""
     toks = [_singular(t) for t in _norm(name).split() if t not in _STOP]
+    if len(toks) > 1 and toks[-1] == "account":           # "1st Checking Account" == "1st Checking"
+        toks = toks[:-1]
     return " ".join(toks)
 
 
@@ -159,8 +167,8 @@ def slug(text: str) -> str:
 
 @lru_cache(maxsize=65536)
 def is_product_phrase(text: str) -> bool:
-    n = _norm(text)
-    return any(_has_phrase(n, p) for p in _PRODUCT_NOUNS)
+    n = " ".join(_singular(t) for t in _norm(text).split())       # "Auto Loans" names a product too
+    return any(_has_phrase(n, _singular(p)) for p in _PRODUCT_NOUNS)
 
 
 # ---------------------------------------------------------------- qualifiers
@@ -188,7 +196,8 @@ def parse_money_range(text: str) -> Optional[tuple[float, float]]:
 
 
 def parse_model_year(text: str) -> Optional[tuple[int, int]]:
-    m = _MODEL_YEAR.search(text or "")
+    """Model year range: '2024-27 Model Year' -> (2024, 2027), 'Model Year 2026-23' -> (2023, 2026)."""
+    m = _MODEL_YEAR.search(text or "") or _MODEL_YEAR_FIRST.search(text or "")
     if not m:
         return None
     lo = int(m.group(1))
@@ -197,7 +206,7 @@ def parse_model_year(text: str) -> Optional[tuple[int, int]]:
     if m.group(2):
         hi = m.group(2)
         hi = int(hi) if len(hi) == 4 else int(str(lo)[:2] + hi)
-        return (lo, hi)
+        return (min(lo, hi), max(lo, hi))
     return (lo, lo)
 
 
@@ -217,7 +226,7 @@ def parse_label(text: str, strip_attribute: bool = True) -> LabelParse:
     my = parse_model_year(work)
     if my:
         quals["model_year"] = my
-        work = _MODEL_YEAR.sub(" ", work)
+        work = _MODEL_YEAR_FIRST.sub(" ", _MODEL_YEAR.sub(" ", work))
     term = parse_term(work)
     if term:
         quals["term"] = term
@@ -283,6 +292,9 @@ class Fact:
 # ---------------------------------------------------------------- block context
 def _is_title_line(block: Block) -> bool:
     t = block.text.strip()
+    bold = re.fullmatch(r"\*\*([^*]+)\*\*:?", t) or re.fullmatch(r"__([^_]+)__:?", t)
+    if bold:                                    # a bold-only line works as a sub-heading ("**Drive-up**")
+        t = bold.group(1).strip()
     if "\n" in t or len(t) > 70 or t.startswith(("|", "!", "[", "-", "*", ">")) or "](" in t:
         return False
     if t.endswith((".", ",", ":", ";", "?", "!")) or "%" in t or "$" in t:
@@ -431,6 +443,16 @@ def _table_facts(block: Block, context, title, acct_default) -> list[Fact]:
 
     if n_attr == 0:
         return []
+    # Qualifiers written in an attribute column's header ("Dividend Rate for 1st 6 Months").
+    header_quals = []
+    for h in header:
+        hc = clean_cell(h)
+        if _HEADER_AFTER_PROMO.search(hc):
+            header_quals.append((("variant", ("after promotional",)),))
+        elif _HEADER_INTRO.search(hc):
+            header_quals.append((("variant", ("introductory",)),))
+        else:
+            header_quals.append(())
     label_col = next((i for i, (k, _) in enumerate(kinds) if k == "label"), None)
     if label_col is None and kinds[0][0] == "other":
         label_col = 0
@@ -452,6 +474,11 @@ def _table_facts(block: Block, context, title, acct_default) -> list[Fact]:
                         row_quals.setdefault(qk, qv)
         prod, quals = ctx_prod, ctx_quals
         label_text = cells[label_col] if label_col is not None and label_col < len(cells) else ""
+        if not label_text:
+            # No label column: a qualifier cell may carry the full product name
+            # ("Term" = "10 Month Fixed Jumbo Certificate Special").
+            label_text = next((cells[i] for i, (k, _) in enumerate(kinds)
+                               if k == "qual" and i < len(cells) and is_product_phrase(cells[i])), "")
         if label_text:
             lp = parse_label(label_text)
             if lp.product and is_product_phrase(label_text):
@@ -466,7 +493,8 @@ def _table_facts(block: Block, context, title, acct_default) -> list[Fact]:
                 cell_attr = attribute_of(cells[i])            # a unit written in the cell beats the header
                 attr = cell_attr if cell_attr in ("apr", "apy") else a
                 quote = f"{header_line} || {row_line}"
-                facts.append(_fact(prod, attr, quals, cells[i], "table", quote, context, block.index))
+                facts.append(_fact(prod, attr, _merge_quals(header_quals[i], quals), cells[i], "table",
+                                   quote, context, block.index))
     return facts
 
 
@@ -481,6 +509,7 @@ def _fact(product, attr, quals, value, extractor, quote, context, block_index) -
 
 
 # ---------------------------------------------------------------- key-value lines and prose
+_SITE_ATTRIBUTES = {"routing_number"}
 _FOOTNOTE_LABEL = re.compile(r"^\d+[A-Z]")       # "1Term Share Certificate Rates: ..." is a footnote, not a label
 
 
@@ -500,6 +529,10 @@ def _kv_facts(block: Block, context, title, acct_default) -> list[Fact]:
         lp = parse_label(label)
         attr = lp.attribute
         ctx_prod, ctx_quals = context_product(context, title)
+        if attr in _SITE_ATTRIBUTES and not (lp.product and is_product_phrase(label)):
+            prod, quals = "", acct_default                  # identifiers of the institution itself
+            facts.append(_fact(prod, attr, quals, value, "kv", " ".join(line.split()), context, block.index))
+            continue
         if attr is None:
             # The label itself names the attribute ("Phone", "Hours"). Values with a rate in them are
             # sentences and are left to the prose extractor.
@@ -507,6 +540,11 @@ def _kv_facts(block: Block, context, title, acct_default) -> list[Fact]:
                 continue
             attr = slug(label)
             prod, quals = ctx_prod, ctx_quals
+            # The nearest sub-heading tells apart repeated labels ("Lobby" / "Drive-up" hours).
+            inner = next((c for c in reversed(context) if not is_product_phrase(c) and not _is_marketing(c)), "")
+            section = product_key(inner)
+            if section and section != product_key(prod):
+                quals = _merge_quals(quals, (("variant", (section,)),))
         elif lp.product and is_product_phrase(label):
             prod, quals = lp.product, lp.qualifiers
         elif attr == "fee" and lp.product:
@@ -521,8 +559,9 @@ def _kv_facts(block: Block, context, title, acct_default) -> list[Fact]:
 
 # "... 12.50% to 19.50% APR": the second number is the upper end of the same value.
 _PCT_RANGE_TAIL = re.compile(r"\s*(?:-|–|—|to)\s*(\d{1,2}(?:\.\d{1,3})?)\s?%\s*(APY|APR)?", re.I)
-_FLOOR_WORDS = re.compile(r"\b(?:less than|minimum|floor|at least|lower than)\s*$", re.I)
-_CAP_WORDS = re.compile(r"\b(?:exceed|maximum|cap|more than|higher than|greater than|up to)\s*$", re.I)
+# Limit words just before the number, allowing a few words in between ("floor rate of 4.00%").
+_FLOOR_WORDS = re.compile(r"\b(?:less than|minimum|floor|at least|lower than)\b(?:\W+\w+){0,4}\W*$", re.I)
+_CAP_WORDS = re.compile(r"\b(?:exceed|maximum|cap|ceiling|more than|higher than|greater than|up to)\b(?:\W+\w+){0,4}\W*$", re.I)
 _SENTENCE_END = re.compile(r"[.!?;](?:\s|$)")
 
 
@@ -645,6 +684,9 @@ def extract_page(url: str, title: str, blocks: list[Block], info, skip_blocks: s
         for f in found:
             # Calculator pages show example results; only the rates they quote are site facts.
             if page_type == "calculator" and f.attribute not in _RATE_ATTRIBUTES:
+                continue
+            # Converted spreadsheets and PDF forms: only values that carry a number are usable.
+            if page_type == "document" and not re.search(r"\d", f.value):
                 continue
             if not _check(f):
                 rejected += 1
