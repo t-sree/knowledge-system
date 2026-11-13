@@ -28,3 +28,13 @@
 {"id": "dev-028", "category": "tier_disambiguation", "question": "What is the lowest Share Savings dividend rate tier?", "must_include": ["0.00%"]}
 {"id": "dev-029", "category": "current_value", "question": "What's the 15-year fixed mortgage rate?", "must_include": ["6.75%"]}
 {"id": "dev-030", "category": "list_completeness", "question": "What are all your certificate terms and APYs?", "must_include": ["1.80%", "3.40%", "4.10%"]}
+{"id": "dev-031", "category": "branch_info", "question": "Where is the Peosta branch located?", "must_include": ["185 Peosta"]}
+{"id": "dev-032", "category": "branch_info", "question": "What's the street address for the Sycamore Street branch?", "must_include": ["1465 Sycamore"]}
+{"id": "dev-033", "category": "temporal_as_of", "question": "When will the Hy-Vee location close?", "must_include": ["March 31, 2026"]}
+{"id": "dev-034", "category": "list_completeness", "question": "Which mobile wallets work with Dupaco cards?", "must_include": ["Apple Pay", "Google Pay"]}
+{"id": "dev-035", "category": "current_value", "question": "How much down payment help does Home$tart give first-time buyers?", "must_include": ["15,000"]}
+{"id": "dev-036", "category": "current_value", "question": "When was Dupaco founded?", "must_include": ["1948"]}
+{"id": "dev-037", "category": "should_refuse", "question": "What are the lobby hours of the Springfield branch?"}
+{"id": "dev-038", "category": "should_refuse", "question": "What is the address of the Cedar Rapids Westdale branch?"}
+{"id": "dev-039", "category": "stale_trap", "question": "How many times has Forbes named Dupaco a top credit union?", "must_include": ["fifth"]}
+{"id": "dev-040", "category": "branch_info", "question": "What is the Platteville branch address?", "must_include": ["1100 E. Business Highway 151"]}

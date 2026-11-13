@@ -1,29 +1,29 @@
 """
 Knowledge system for the credit-union snapshot hackathon.
 
-Build status: page store (A), page classifier (B), fact extractor (C), fact history (D),
-resolver (E) and fact timeline (F) are in place. `answer()` is still the
-starter's naive paragraph search and `conflicts()` returns nothing; both are replaced as the
-remaining components land.
+Build status: components A-F, the rules-only question parser (H), view selector (I), fact and
+passage matching (J) and template / extractive answers (K) are in place. `conflicts()` (G) and the
+OpenAI fallback are still to come.
+
+answer():  parse (H) -> select the snapshot view (I) -> fact path for rates and fees (J/K);
+           otherwise passage search (J) with an extractive answer (K); refusal when neither has evidence.
 """
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(next(d / "harness" for d in Path(__file__).resolve().parents if (d / "harness" / "contract.py").exists())))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from contract import Answer, Conflict, Snapshot, Source  # noqa: E402
+from contract import Answer, Conflict, Snapshot  # noqa: E402
 
 from answer import RATE_ATTRS, FactAnswerer  # noqa: E402
 from classify import PageClassifier  # noqa: E402
 from facts import FactHistory  # noqa: E402
 from resolve import Resolver  # noqa: E402
 from store import PageStore  # noqa: E402
+from passages import PassageAnswerer, PassageIndex  # noqa: E402
 from question import parse  # noqa: E402
 from timeline import Timeline  # noqa: E402
 from vocab import Vocabulary  # noqa: E402
-
-WORD = re.compile(r"[a-z0-9$%.]+")
 
 
 class KnowledgeSystem:
@@ -36,9 +36,11 @@ class KnowledgeSystem:
         self.timeline = Timeline(self.resolver)
         self.vocab = Vocabulary(self.facts)
         self.fact_answerer = FactAnswerer(self)
+        self.passages = PassageIndex(self.store)
+        self.passage_answerer = PassageAnswerer(self)
         self._cache: dict = {}
         self.answer_errors = 0
-        self.pages = {}  # url -> (snapshot_id, markdown); used by the interim naive answer()
+        self.passage_errors = 0
 
     def ingest(self, snapshot: Snapshot) -> None:
         rec = self.store.add_snapshot(snapshot)
@@ -49,11 +51,13 @@ class KnowledgeSystem:
                 self.classify_errors += 1
         self.facts.add_snapshot(rec)
         try:
+            self.passages.add_snapshot(rec)
+        except Exception:
+            self.passage_errors += 1
+        try:
             self.vocab.ensure()          # built at ingest so questions don't pay for it
         except Exception:
             pass
-        for p in snapshot.pages:
-            self.pages[p.url] = (snapshot.snapshot_id, p.markdown)
 
     # ------------------------------------------------------------------ I: view selector
     def select_view(self, ref_date):
@@ -99,21 +103,11 @@ class KnowledgeSystem:
         if q.attribute in RATE_ATTRS:
             # Rates are only ever answered from extracted facts; no matching fact = not published.
             return FactAnswerer._refusal(q)
-        return self._naive(question)
-
-    def _naive(self, question):
-        """Interim fallback until passage retrieval (step 2) lands: the starter's paragraph search."""
-        q = set(WORD.findall(question.lower()))
-        best, best_score = None, 0
-        for url, (sid, md) in self.pages.items():
-            for para in md.split("\n\n"):
-                s = len(q & set(WORD.findall(para.lower())))
-                if s > best_score:
-                    best, best_score = (url, sid, para.strip()), s
-        if not best:
-            return Answer(text="I don't know.", confident=False)
-        url, sid, para = best
-        return Answer(text=para[:600], sources=[Source(url=url, snapshot_id=sid)])
+        try:
+            return self.passage_answerer.answer(q, index, past, rec.taken_on)
+        except Exception:
+            self.answer_errors += 1
+            return FactAnswerer._refusal(q)
 
     def conflicts(self):
         return []
