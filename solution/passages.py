@@ -241,8 +241,8 @@ class PassageIndex:
                         title = v.title.split("|")[0].strip()
                         break
             texts.append(f"{title}\n{c.text}" if title else c.text)
-        from llm import EMBED_RETRIES
-        m = llm.embed(texts, retries=EMBED_RETRIES)
+        from llm import EMBED_BUDGET, EMBED_RETRIES
+        m = llm.embed(texts, retries=EMBED_RETRIES, budget=EMBED_BUDGET)
         if m is None:
             return                                      # dense search stays off for these chunks
         np = llm.np
@@ -260,12 +260,16 @@ class PassageIndex:
 
     def coverage(self, toks: set, groups) -> float:
         """Share of the question's words (idf-weighted) found in `toks`. A word counts as found when it
-        or one of its alternatives is there; words that occur nowhere on the site are left out."""
+        or one of its alternatives is there. Words that occur nowhere on the site count at 30% weight:
+        they can't be matched ("drive-thru" vs "drive-up"), but a question about something the site never
+        mentions ("timeshare loan") must not be reduced to its common words."""
         total = got = 0.0
+        max_idf = self.idf("\0")                      # idf of a word with no occurrences
         for primary, alts in groups:
             options = [primary, *alts]
             known = [o for o in options if self.df.get(o, 0) > 0]
             if not known:
+                total += 0.3 * max_idf
                 continue
             w = max(self.idf(o) for o in known)
             total += w
@@ -417,6 +421,12 @@ def named_terms(question: str, common: set[str]) -> list[str]:
     return out
 
 
+def _loose(text: str) -> str:
+    """Comparison form: lower case, unified dashes and quotes, single spaces."""
+    t = (text or "").lower().replace("–", "-").replace("—", "-").replace("’", "'").replace("“", '"').replace("”", '"')
+    return " ".join(t.split())
+
+
 def _sentences(text: str) -> list[str]:
     return [u.strip() for u in _SENT.split(text) if u and u.strip()]
 
@@ -424,6 +434,7 @@ def _sentences(text: str) -> list[str]:
 class PassageAnswerer:
     def __init__(self, ks) -> None:
         self.ks = ks
+        self.last_coverage = 0.0
 
     def query_tokens(self, q) -> tuple[list[str], set[str]]:
         """Stemmed query words (site-defined abbreviations expanded) and the words a pattern stands for."""
@@ -450,6 +461,7 @@ class PassageAnswerer:
     def answer(self, q, index: int, past: bool, snapshot_date: str):
         from contract import Answer, Source
         idx: PassageIndex = self.ks.passages
+        self.last_coverage = 0.0
         query, _ = self.query_tokens(q)
         counting = bool(_HOW_MANY.search(q.text))
         # Evidence a chunk must contain for this kind of question: a time, an address, a phone number,
@@ -514,6 +526,7 @@ class PassageAnswerer:
         good = [r for r in results if ok(r)]
         if not good:
             return self._refusal()
+        self.last_coverage = good[0][1]          # how much of the question the best passage covers
         picks = self._picks(q, good, results, names, evident)
         parts = [self._part(r, query) for r in picks]
         text = "\n\n".join(p for p in parts if p)
@@ -532,6 +545,100 @@ class PassageAnswerer:
                 text, sources = composed
         if past:
             text = f"As of {snapshot_date}: " + text
+        return Answer(text=text, sources=sources, confident=True)
+
+    # ------------------------------------------------------------------ LLM path
+    def candidates(self, q, index: int, n: int = 8):
+        """Passages to show the LLM step: the best hybrid matches plus, when the question needs a
+        pattern (time, address, URL, year, count), the best matches that contain it."""
+        idx: PassageIndex = self.ks.passages
+        query, _ = self.query_tokens(q)
+        expansions = {a for alts in self._alts.values() for a in alts} - set(self._alts)
+        groups = [(t, self._alts.get(t, set())) for t in query if t not in expansions or t in self._alts]
+        qvec = self.ks.question_vector(q.text)
+        out = idx.search(query, index, k=n, qvec=qvec, groups=groups)
+        evidence = []
+        if (q.attribute or "") in EVIDENCE:
+            evidence.append(EVIDENCE[q.attribute])
+        if "url" in q.intents:
+            evidence.append(_URL)
+        if re.match(r"\s*when\b", q.text, re.I) and (q.attribute or "") not in EVIDENCE:
+            evidence.append(_WHEN)
+        counting = bool(_HOW_MANY.search(q.text))
+        if evidence or counting:
+            qset = set(query)
+            strict = idx.search(query, index, k=4, qvec=qvec, groups=groups,
+                                accept=lambda t: all(e.search(t) for e in evidence)
+                                and (not counting or _has_count(t, qset)))
+            seen = {r[2].text for r in out}
+            out += [r for r in strict if r[2].text not in seen]
+        return out, query
+
+    def evidence_check(self, q, query):
+        """The checks every passage answer must pass, whoever picked the passage: names from the
+        question (the rarest one and at least half), and the pattern the question type needs (a time
+        for hours, a street address, a phone number, a URL, a year for "when", a count for "how many")."""
+        idx: PassageIndex = self.ks.passages
+        common = {stem(w) for w in STOP | {"dupaco", "branch", "branches", "visa", "credit", "union"}}
+        names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
+        rarest = max(names, key=idx.idf) if names else None
+        evidence = []
+        if (q.attribute or "") in EVIDENCE:
+            evidence.append(EVIDENCE[q.attribute])
+        if "url" in q.intents:
+            evidence.append(_URL)
+        if re.match(r"\s*when\b", q.text, re.I) and (q.attribute or "") not in EVIDENCE:
+            evidence.append(_WHEN)
+        counting = bool(_HOW_MANY.search(q.text))
+        qset = set(query)
+
+        def check(r) -> bool:
+            c, entry = r[2], r[3]
+            if names:
+                toks = set(tokens(c.text)) | set(tokens(entry.version.title))
+                present = [n for n in names if n in toks]
+                if rarest not in present or 2 * len(present) < len(names):
+                    return False
+            if any(not e.search(c.text) for e in evidence):
+                return False
+            return not counting or _has_count(c.text, qset)
+        return check
+
+    def answer_from(self, q, picks, query, past: bool, snapshot_date: str, quotes=()):
+        """Extractive answer from passages the LLM step judged to answer the question. The same evidence
+        checks as the rules path apply; no passage left means a refusal. Verified word-for-word quotes
+        (the exact answering sentences) are used as the answer when they pass those checks."""
+        from contract import Answer, Source
+        check = self.evidence_check(q, query)
+        good_quotes = [(r, t) for r, t in quotes if check(r)]
+        if good_quotes:
+            # The quote finds the right passage; the passage's text keeps the facts next to the quote
+            # ("…close March 31, 2026" and "…go to Key West and Sycamore Street").
+            parts, used = [], set()
+            for r, t in good_quotes:
+                if r[2].text in used:
+                    continue
+                used.add(r[2].text)
+                parts.append(self._part(r, query) if _loose(t) in _loose(self._part(r, query)) else r[2].text)
+            text = "\n\n".join(parts)
+            if past:
+                text = f"As of {snapshot_date}: " + text
+            seen, sources = set(), []
+            for r, t in good_quotes:
+                v = r[3].version
+                if v.url not in seen:
+                    seen.add(v.url)
+                    sources.append(Source(url=v.url, snapshot_id=v.snapshot_id, quote=t[:200]))
+            return Answer(text=text, sources=sources, confident=True)
+        picks = [r for r in picks if check(r)]
+        if not picks:
+            return self._refusal()
+        parts = [self._part(r, query) for r in picks]
+        text = "\n\n".join(p for p in parts if p)
+        if past:
+            text = f"As of {snapshot_date}: " + text
+        sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
+                   for r in picks]
         return Answer(text=text, sources=sources, confident=True)
 
     # ------------------------------------------------------------------ picking passages

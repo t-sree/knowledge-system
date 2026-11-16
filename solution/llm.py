@@ -16,9 +16,12 @@ from typing import Optional
 
 EMBED_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4o-mini"
+GUARD_GRACE = 0.5            # seconds on top of a call's timeout before we stop waiting
+_GUARD_POOL = ThreadPoolExecutor(max_workers=8)
 EMBED_BATCH = 256
 EMBED_WORKERS = 3            # parallel requests at ingest; more trips the per-minute rate limit
 EMBED_RETRIES = 4            # per batch at ingest, with back-off 2, 4, 8, 16 s
+EMBED_BUDGET = 300.0         # seconds per ingest call; batches not done by then stay empty (keyword search covers them)
 EMBED_CHARS = 1500           # chunks are short; this only guards against very long ones
 
 
@@ -46,20 +49,21 @@ class LLM:
         self.errors = 0
         self.calls = 0
         self.last_error = ""
+        self.timeouts = 0
         key = os.environ.get("OPENAI_API_KEY") or _key_from_dotenv()
         if not key:
             return
         try:
             import numpy as np
             from openai import OpenAI
-            self.client = OpenAI(api_key=key, max_retries=1)
+            self.client = OpenAI(api_key=key, max_retries=0)       # retries are ours (ingest) or none (questions)
             self.np = np
             self.enabled = True
         except Exception:
             self.enabled = False
 
     # ------------------------------------------------------------------ embeddings
-    def embed(self, texts: list[str], timeout: float = 30.0, retries: int = 0):
+    def embed(self, texts: list[str], timeout: float = 30.0, retries: int = 0, budget: Optional[float] = None):
         """Unit-length float32 vectors (rows) for `texts`, or None if nothing could be embedded.
         Large jobs run in batches with limited parallelism; a failed batch is retried with back-off,
         and a batch that still fails gets zero rows (no match) instead of losing every batch."""
@@ -68,8 +72,12 @@ class LLM:
         np = self.np
         batches = [texts[i:i + EMBED_BATCH] for i in range(0, len(texts), EMBED_BATCH)]
 
+        deadline = time.time() + budget if budget else None
+
         def run(batch):
             for attempt in range(retries + 1):
+                if deadline is not None and time.time() > deadline:
+                    return None                  # over the time budget: leave this batch empty
                 try:
                     self.calls += 1
                     resp = self.client.embeddings.create(
@@ -82,7 +90,9 @@ class LLM:
                         time.sleep(min(30.0, 2.0 * 2 ** attempt))
             return None
 
-        if len(batches) == 1:
+        if len(batches) == 1 and budget is None:
+            parts = [self._guarded(lambda: run(batches[0]), timeout)]     # question time: hard deadline
+        elif len(batches) == 1:
             parts = [run(batches[0])]
         else:
             with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as ex:
@@ -99,15 +109,34 @@ class LLM:
         return m
 
     # ------------------------------------------------------------------ chat
-    def chat(self, system: str, user: str, max_tokens: int = 300, timeout: float = 3.0) -> Optional[str]:
+    def chat(self, system: str, user: str, max_tokens: int = 300, timeout: float = 3.0,
+             json_mode: bool = False) -> Optional[str]:
         if not self.enabled:
             return None
+        extra = {"response_format": {"type": "json_object"}} if json_mode else {}
+
+        def call():
+            try:
+                self.calls += 1
+                resp = self.client.chat.completions.create(
+                    model=CHAT_MODEL, temperature=0, seed=7, max_tokens=max_tokens, timeout=timeout,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}], **extra)
+                return (resp.choices[0].message.content or "").strip()
+            except Exception as e:
+                self.errors += 1
+                self.last_error = f"{type(e).__name__}: {str(e)[:200]}"
+                return None
+        return self._guarded(call, timeout)
+
+    def _guarded(self, fn, timeout: float):
+        """Run `fn` with a deadline we enforce ourselves: the client's own timeout does not cover every
+        stall (one call hung for 17 minutes). Past the deadline we stop waiting and return None; the
+        caller falls back to the rules path. The abandoned call finishes on its own in the background."""
+        future = _GUARD_POOL.submit(fn)
         try:
-            self.calls += 1
-            resp = self.client.chat.completions.create(
-                model=CHAT_MODEL, temperature=0, seed=7, max_tokens=max_tokens, timeout=timeout,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
-            return (resp.choices[0].message.content or "").strip()
+            return future.result(timeout=timeout + GUARD_GRACE)
         except Exception:
             self.errors += 1
+            self.timeouts += 1
+            self.last_error = f"no answer within {timeout + GUARD_GRACE:.1f}s"
             return None

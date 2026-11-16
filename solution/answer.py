@@ -56,6 +56,7 @@ class FactAnswerer:
     def __init__(self, ks) -> None:
         self.ks = ks
         self._priors: dict[tuple[int, int], dict[str, float]] = {}
+        self.last_score = 0.0                   # best product-match score of the last answer()
 
     def view_priors(self, index: int) -> dict[str, float]:
         """How product-like each key is in this view: the best evidence it has here.
@@ -134,16 +135,20 @@ class FactAnswerer:
         asked = q.variants if asked_variants is None else asked_variants
         if not asked <= variants:
             return False
-        if q.term is not None:
+        terms = set(q.terms) | ({q.term} if q.term is not None else set())
+        if terms:
             if "term" in quals:
-                if quals["term"] != q.term:
+                if quals["term"] not in terms:
                     return False
             elif "term" in kinds:
                 return False
-        if q.model_year is not None and "model_year" in quals:
-            lo, hi = quals["model_year"]
-            if not lo <= q.model_year <= hi:
-                return False
+        if q.model_year is not None:
+            if "model_year" in quals:
+                lo, hi = quals["model_year"]
+                if not lo <= q.model_year <= hi:
+                    return False
+            elif "model_year" in kinds:
+                return False            # the product's rates depend on model year; this fact states none
         tier = _tier(quals)
         if q.amounts and tier:
             lo, hi = tier
@@ -168,6 +173,7 @@ class FactAnswerer:
         R = self.ks.resolver
         V = self.ks.vocab
         vidx = R.view_index(index)
+        self.last_score = 0.0
         rate_question = q.attribute in RATE_ATTRS or q.attribute is None and (
             q.intents & {"yesno", "high", "low", "url", "change", "available"})
         if not rate_question and not q.attribute:
@@ -178,13 +184,7 @@ class FactAnswerer:
         for k in vidx:
             if rate_question and k[1] in RATE_ATTRS or not rate_question and k[1] == q.attribute:
                 view_products.setdefault(k[0], set()).add(k[1])
-        # A model year in the question only fits products whose rates are tiered by model year.
-        if q.model_year is not None:
-            with_years = {p: a for p, a in view_products.items()
-                          if p in V.products and "model_year" in V.products[p].qualifier_kinds}
-            if with_years:
-                view_products = with_years
-        if "available" in q.intents and rate_question:
+        if "available" in q.intents and rate_question or q.products:
             # products seen in any snapshot, so a discontinued one can still be recognised
             for k in self.ks.facts.by_key:
                 if k[1] in RATE_ATTRS:
@@ -197,12 +197,23 @@ class FactAnswerer:
             if keys:
                 return self._compose_simple(keys, index, ref_date, past, snapshot_date)
 
-        scored = self.score_products(q, view_products, index)
-        # Narrowed to products tiered by model year, a weaker name match is enough ("2025 car loan").
-        min_score = MIN_SCORE_NARROWED if q.model_year is not None and len(view_products) <= 8 else MIN_SCORE
+        min_score = MIN_SCORE
+        if q.products:
+            # Products chosen by the LLM step from the closed vocabulary: no name matching needed.
+            scored = [(1.0, p, set()) for p in q.products if p in view_products]
+        else:
+            scored = self.score_products(q, view_products, index)
+            if (not scored or scored[0][0] < MIN_SCORE) and q.model_year is not None:
+                # Fallback only: a model year fits products tiered by model year ("2025 car loan").
+                narrowed = {p: a for p, a in view_products.items()
+                            if p in V.products and "model_year" in V.products[p].qualifier_kinds}
+                if narrowed:
+                    scored = self.score_products(q, narrowed, index)
+                    min_score = MIN_SCORE_NARROWED
         if not scored or scored[0][0] < min_score:
             return None
         best = scored[0][0]
+        self.last_score = best
         if "list" in q.intents:
             chosen = [(s, p, left) for s, p, left in scored if s >= 0.8 * best]
         else:

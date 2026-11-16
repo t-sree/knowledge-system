@@ -1,0 +1,15 @@
+{"id": "pr-001", "category": "tier_disambiguation", "question": "What's the APR on a boat loan for a 2025 boat?", "must_include": ["Boat", "7.89%"], "must_not_include": ["Snowmobile"]}
+{"id": "pr-002", "category": "should_refuse", "question": "Can I get a timeshare loan from Dupaco?"}
+{"id": "pr-003", "category": "should_refuse", "question": "What is the 60-month auto loan rate for a 2016 car?"}
+{"id": "pr-004", "category": "tier_disambiguation", "question": "Which certificate pays the higher rate, 12 month or 24 month?", "must_include": ["3.40%", "2.50%"]}
+{"id": "pr-005", "category": "temporal_as_of", "question": "Is the Hy-Vee branch still open?", "must_include": ["March 31, 2026"]}
+{"id": "pr-006", "category": "entity_attribution", "question": "What is the rate for the Bright Savings account?", "must_include": ["2.25"]}
+{"id": "pr-007", "category": "stale_trap", "question": "What recognition has Dupaco received from Forbes?", "must_include": ["fifth"]}
+{"id": "pr-008", "category": "current_value", "question": "What is Dupaco's Home$tart program?", "must_include": ["15,000"]}
+{"id": "pr-009", "category": "temporal_as_of", "question": "Back in May 2026, what APY did the 10 month fixed jumbo certificate special pay?", "must_include": ["3.90%"]}
+{"id": "pr-010", "category": "change", "question": "When did the 17-month certificate special go up?", "must_include": ["4.10%"]}
+{"id": "pr-011", "category": "should_refuse", "question": "What is the address of the Cedar Rapids Westdale branch?"}
+{"id": "pr-012", "category": "should_refuse", "question": "Can you give me the lobby hours for the Mullan Avenue branch?"}
+{"id": "pr-013", "category": "stale_trap", "question": "I'm buying a 2025 car and want a 60 month loan. What APR would I get?", "must_include": ["5.39%"], "must_not_include": ["5.34%"]}
+{"id": "pr-014", "category": "list_completeness", "question": "Which credit cards do you have?", "must_include": ["Platinum Visa", "Rewards Visa"]}
+{"id": "pr-015", "category": "should_refuse", "question": "What interest rate do you charge on a construction loan?"}

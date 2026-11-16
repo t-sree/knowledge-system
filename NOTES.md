@@ -2,12 +2,14 @@
 
 ## Status
 
-Answers rate / fee questions from extracted facts and everything else from passage search over the
-selected snapshot. `conflicts()` lists contradictions found within each snapshot (selftest conflicts
-F1 1.0, resolution 1.0; 19 conflicts on the public snapshots).
+Hybrid: rules answer every question first (rate / fee questions from extracted facts, everything else
+from passage search over the selected snapshot); confident rules answers are returned as is, the rest
+are read by gpt-4o-mini. `conflicts()` lists contradictions found within each snapshot (selftest
+conflicts F1 1.0, resolution 1.0; 19 conflicts on the public snapshots).
 
-Local results (public eval, no judge): final score 0.871 with `OPENAI_API_KEY`, 0.859 without.
-p95 latency about 0.4 s; ingest about 40 s with embeddings, about 15–25 s without.
+Local results (no judge), mean item score: public 0.884, our dev set 1.000, our rewordings 0.972, our
+probe questions 0.933; selftest final 1.0. Public official final 0.857 with the key (p50 0.37 s, p95
+~3.7 s — speed still to be tuned), 0.859 without the key (p95 0.1 s). Ingest 40–90 s with embeddings.
 
 ## Approach
 
@@ -28,8 +30,17 @@ p95 latency about 0.4 s; ingest about 40 s with embeddings, about 15–25 s with
 6. **Passage index** (`passages.py`): short chunks of every block (a label with its short lines stays one
    chunk), BM25 postings, and — with an OpenAI key — `text-embedding-3-small` vectors.
 
-`answer(question, as_of)`:
+`answer(question, as_of)` — hybrid:
 
+0. The rules path below runs first. If it is confident (an exact site-wide fact, a rate with a strong
+   product match covering every term asked, or a passage covering most of the question with the needed
+   evidence) its answer is returned. Otherwise **gpt-4o-mini** (`understand.py`) reads the question in
+   one JSON call: route (rate fact / passage / not on the site), products chosen only from a candidate
+   list of real product keys, attribute, terms, model year, amount, variants, intent, and which retrieved
+   passages answer it, with word-for-word quotes that code verifies. The answer is still built by code
+   from facts and the site's own sentences; the same evidence checks apply; an LLM refusal never
+   overrides a rate found in the facts. Every OpenAI call has an enforced deadline; on failure the rules
+   answer stands.
 1. **Parse** (`question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
    available), attribute (incl. hours / address wording), qualifiers (term, amount, model year, variant,
    business), dates named in the question.
@@ -67,10 +78,11 @@ from one snapshot to the next is an update and is not listed.
 
 ## API keys
 
-- `OPENAI_API_KEY` (optional). Read from the environment, else from a `.env` file next to or above the
-  submission. Used for `text-embedding-3-small` (product and passage retrieval). `gpt-4o-mini` answer
-  composition is implemented but off by default (`COMPOSE_MODE` in `passages.py`): it did not beat the
-  extractive answers on keyword scoring and added about 1 s per question.
+- `OPENAI_API_KEY` (optional, paid API). Read from the environment, else from a `.env` file next to or
+  above the submission. Used for `text-embedding-3-small` (product and passage retrieval, at ingest and
+  one call per question) and `gpt-4o-mini` (question understanding for questions the rules are not sure
+  about). Free-text answer composition by the LLM is implemented but off (`COMPOSE_MODE` in
+  `passages.py`): it did not beat extractive answers on keyword scoring.
 - Without the key, or without the `openai` / `numpy` packages, everything runs rules-only.
 
 ## Running
@@ -81,5 +93,6 @@ python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
 
 Dev tools (not used by the solution): `dev/ask.py` (answers with parse and score per question),
 `dev/questions.jsonl` (our own 47 questions), `dev/paraphrases.jsonl` (our rewordings of the public
-questions), `dev/compare_modes.py`, `dev/inspect_*.py` reports.
+questions), `dev/probes.jsonl` (hard new wordings), `dev/score_all.py` (all sets with latency),
+`dev/compare_modes.py`, `dev/inspect_*.py` reports.
 Issues found while testing are logged in `docs/ISSUES.md`.

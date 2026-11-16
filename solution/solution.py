@@ -8,6 +8,7 @@ OpenAI fallback are still to come.
 answer():  parse (H) -> select the snapshot view (I) -> fact path for rates and fees (J/K);
            otherwise passage search (J) with an extractive answer (K); refusal when neither has evidence.
 """
+import copy
 import sys
 from pathlib import Path
 
@@ -25,7 +26,11 @@ from store import PageStore  # noqa: E402
 from passages import PassageAnswerer, PassageIndex  # noqa: E402
 from question import parse  # noqa: E402
 from timeline import Timeline  # noqa: E402
+from understand import Understander  # noqa: E402
 from vocab import Vocabulary  # noqa: E402
+
+STRONG_MATCH = 0.75     # rules product-match score above which the rules fact answer is used without the LLM
+STRONG_COVERAGE = 0.8   # passage coverage above which the rules passage answer is used without the LLM
 
 
 class KnowledgeSystem:
@@ -43,6 +48,7 @@ class KnowledgeSystem:
         # OpenAI is optional: checked once here; without a key everything runs on rules.
         self.llm = LLM()
         self.register = ConflictRegister(self)
+        self.understander = Understander(self)
         self._qvecs: dict = {}
         self._cache: dict = {}
         self.answer_errors = 0
@@ -69,6 +75,10 @@ class KnowledgeSystem:
         except Exception:
             self.passage_errors += 1
         self.register.add_view(rec.index)       # contradictions within this snapshot (G)
+        try:
+            self.understander.embed_products()
+        except Exception:
+            self.passage_errors += 1
 
     def question_vector(self, text: str):
         """Embedding of a question (cached), or None without an LLM."""
@@ -104,14 +114,40 @@ class KnowledgeSystem:
         return ans
 
     def _answer(self, question, as_of=None):
+        """Hybrid: the rules answer first; when the rules are confident it is returned as is (fast, stable).
+        Otherwise gpt-4o-mini reads the question and its answer wins; if the LLM is unavailable or fails,
+        the rules answer stands."""
         self.vocab.ensure()
         q = parse(question, self.vocab)
+        rules_ans, strong = self._rules_answer(q, as_of)
+        if strong or not self.llm.enabled:
+            return rules_ans
+        rules_from_facts = self._last_from_facts
+        q2 = copy.deepcopy(q)
+        llm_ans = self._llm_answer(q2, as_of, rules_terms=q.terms)
+        if llm_ans is None:
+            return rules_ans
+        if not llm_ans.confident and rules_from_facts and rules_ans.confident:
+            # A rate the rules found in the extracted facts is exact; an LLM refusal does not override it.
+            return rules_ans
+        return llm_ans
+
+    # ------------------------------------------------------------------ rules path
+    def _view(self, q, as_of):
         # A date in a "how did it change since May" question is the start of the change, not the view.
         ref = as_of or (None if "change" in q.intents else q.ref_date)
-        index = self.select_view(ref)
+        return ref, self.select_view(ref)
+
+    def _too_early(self):
+        return Answer(text="I don't have information from that early; Dupaco's website records here start "
+                           "later than that date, so I can't confirm what applied then.", confident=False)
+
+    def _rules_answer(self, q, as_of):
+        """(answer, confident?) from the rules path."""
+        self._last_from_facts = False
+        ref, index = self._view(q, as_of)
         if index is None:
-            return Answer(text="I don't have information from that early; Dupaco's website records here start "
-                               "later than that date, so I can't confirm what applied then.", confident=False)
+            return self._too_early(), True
         rec = self.store.snapshots[index]
         ref_date = ref if ref and ref >= rec.taken_on else rec.taken_on
         past = bool(as_of) or (q.ref_date is not None and index < len(self.store.snapshots) - 1)
@@ -121,15 +157,67 @@ class KnowledgeSystem:
             self.answer_errors += 1
             ans = None
         if ans is not None:
-            return ans
+            self._last_from_facts = True
+            site_wide = q.attribute and q.attribute not in RATE_ATTRS and not q.products and ans.confident \
+                and self.fact_answerer.last_score == 0.0
+            strong = ans.confident and (site_wide or self.fact_answerer.last_score >= STRONG_MATCH)
+            return ans, strong
         if q.attribute in RATE_ATTRS:
             # Rates are only ever answered from extracted facts; no matching fact = not published.
-            return FactAnswerer._refusal(q)
+            return FactAnswerer._refusal(q), False
         try:
-            return self.passage_answerer.answer(q, index, past, rec.taken_on)
+            ans = self.passage_answerer.answer(q, index, past, rec.taken_on)
         except Exception:
             self.answer_errors += 1
+            return FactAnswerer._refusal(q), False
+        return ans, ans.confident and self.passage_answerer.last_coverage >= STRONG_COVERAGE
+
+    # ------------------------------------------------------------------ LLM path
+    def _llm_answer(self, q, as_of, rules_terms=()):
+        """gpt-4o-mini reads the question (route, product, qualifiers, which passages answer it); the
+        answer is still built from the site's own facts and sentences. None if the LLM gave nothing."""
+        ref, index = self._view(q, as_of)
+        if index is None:
+            return self._too_early()
+        try:
+            u = self.understander.understand(q, index)
+        except Exception:
+            self.answer_errors += 1
+            return None
+        if u is None:
+            return None
+        Understander.apply(q, u)
+        if len(rules_terms) > len(q.terms):
+            q.terms = list(rules_terms)          # the question names more terms than the LLM returned
+            q.term = q.terms[0]
+        Understander.fix_route(q, u)
+        ref, index = self._view(q, as_of)
+        if index is None:
+            return self._too_early()
+        rec = self.store.snapshots[index]
+        ref_date = ref if ref and ref >= rec.taken_on else rec.taken_on
+        past = bool(as_of) or (q.ref_date is not None and index < len(self.store.snapshots) - 1)
+        return self._answer_understood(q, u, index, ref_date, rec, past)
+
+    def _answer_understood(self, q, u, index, ref_date, rec, past):
+        if u["route"] == "rate":
+            try:
+                ans = self.fact_answerer.answer(q, index, ref_date, rec.taken_on, past)
+            except Exception:
+                self.answer_errors += 1
+                ans = None
+            return ans if ans is not None else FactAnswerer._refusal(q)
+        if u["route"] == "passage" and (q.attribute in RATE_ATTRS or u["attribute"] in RATE_ATTRS):
+            # Rates are only ever answered from extracted facts: a rate question the facts can't answer
+            # is not published, even if an article talks about such rates in general.
             return FactAnswerer._refusal(q)
+        if u["route"] == "passage" and (u["passages"] or u["quotes"]):
+            try:
+                return self.passage_answerer.answer_from(q, u["passages"][:3], u["query"], past, rec.taken_on,
+                                                         quotes=u["quotes"])
+            except Exception:
+                self.answer_errors += 1
+        return self.passage_answerer._refusal()
 
     def conflicts(self):
         try:

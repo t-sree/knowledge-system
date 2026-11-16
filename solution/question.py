@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from extract import _norm, _singular, attribute_of, parse_term
+from extract import _TERM, _norm, _singular, attribute_of, parse_term
 
 # ---------------------------------------------------------------- general word lists
 _STOP = set("""
@@ -81,7 +81,9 @@ class Query:
     variants: set[str] = field(default_factory=set)
     business: bool = False
     ref_date: Optional[str] = None             # date named in the question (end of that month)
-    intents: set[str] = field(default_factory=set)   # url, list, high, low, yesno, past, change
+    intents: set[str] = field(default_factory=set)   # url, list, high, low, yesno, past, change, available
+    terms: list[int] = field(default_factory=list)   # several terms asked ("12 month or 24 month")
+    products: Optional[list[str]] = None       # product keys chosen by the LLM step (skips name matching)
 
 
 def _end_of_month(year: int, month: int) -> str:
@@ -113,6 +115,11 @@ def parse(question: str, vocab) -> Query:
 
     # qualifiers
     q.term = parse_term(t)
+    # every term named ("12 month or 24 month?"), in order
+    for m in _TERM.finditer(t):
+        months = int(m.group(1)) * (12 if m.group(2).lower().startswith("y") else 1)
+        if months not in q.terms:
+            q.terms.append(months)
     for m in _YEAR.finditer(t):
         if any(a <= m.start() < b for a, b in date_spans):
             continue
