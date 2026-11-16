@@ -1,0 +1,36 @@
+{"id": "pp-001", "category": "tier_disambiguation", "question": "How much APY does the 17 month certificate special pay?", "must_include": ["4.10%"]}
+{"id": "pp-002", "category": "tier_disambiguation", "question": "17-month special CD yield?", "must_include": ["4.10%"]}
+{"id": "pp-009", "category": "stale_trap", "question": "What's the going rate on a 30 year fixed home loan?", "must_include": ["7.13", "7.25"]}
+{"id": "pp-009b", "category": "stale_trap", "question": "30-yr mortgage interest rate please", "must_include": ["7.13", "7.25"]}
+{"id": "pp-011", "category": "tier_disambiguation", "question": "Current home loan rates?", "must_include": ["7.13"]}
+{"id": "pp-016", "category": "stale_trap", "question": "I'm buying a 2025 car and want a 60 month loan. What APR would I get?", "must_include": ["5.39%"]}
+{"id": "pp-016b", "category": "stale_trap", "question": "Auto loan rate for a 2025 vehicle over 5 years?", "must_include": ["5.39%"]}
+{"id": "pp-034", "category": "list_completeness", "question": "Which credit cards are available and what APR does each carry?", "must_include": ["Platinum Visa", "Rewards Visa", "12.5"]}
+{"id": "pp-045", "category": "tier_disambiguation", "question": "If I keep $15,000 in Share Savings, what dividend rate do I get?", "must_include": ["0.15"]}
+{"id": "pp-054", "category": "entity_attribution", "question": "Dupaco ABA routing number?", "must_include": ["273974581"]}
+{"id": "pp-064", "category": "branch_info", "question": "When are Dupaco lobbies open?", "must_include": ["8:30"]}
+{"id": "pp-066", "category": "branch_info", "question": "What time does the drive-thru open and close?", "must_include": ["8 a.m.", "6 p.m."]}
+{"id": "pp-068", "category": "branch_info", "question": "Where is the Galena, Illinois branch located?", "must_include": ["11375 Oldenburg"]}
+{"id": "pp-073", "category": "conflict_resolution", "question": "How many branch locations does Dupaco operate?", "must_include": ["22"]}
+{"id": "pp-074", "category": "temporal_as_of", "question": "What date is the Hy-Vee branch closing?", "must_include": ["March 31, 2026"]}
+{"id": "pp-087", "category": "stale_trap", "question": "Has Forbes ranked Dupaco? How many times?", "must_include": ["fifth"]}
+{"id": "pp-008", "category": "stale_trap", "question": "Where on the website can I find certificate rates?", "must_include": ["dupaco.com/personal/savings-account"]}
+{"id": "pp-052", "category": "current_value", "question": "What do your checking accounts pay in interest?", "must_include": ["2.50%"]}
+{"id": "pp-035", "category": "tier_disambiguation", "question": "Platinum Visa regular purchase APR?", "must_include": ["12.5"]}
+{"id": "pp-145", "category": "should_refuse", "question": "Do you have a rate for a 5/1 ARM?"}
+{"id": "pp-050", "category": "entity_attribution", "question": "How much does Bright Savings earn?", "must_include": ["2.25"]}
+{"id": "pp-040", "category": "list_completeness", "question": "Give me your credit card interest rates", "must_include": ["12.5", "15.5"]}
+{"id": "pp-080", "category": "stale_trap", "question": "Link to find a Dupaco branch or ATM near me?", "must_include": ["dupaco.com/contact"]}
+{"id": "pp-049", "category": "conflict_resolution", "question": "Is there a savings tier that pays 0.35% APY?", "must_include": ["0.20"]}
+{"id": "pp-031", "category": "current_value", "question": "Tell me about the Home$tart grant", "must_include": ["15,000"]}
+{"id": "pp-028", "category": "tier_disambiguation", "question": "Personal loan APR for a 3-year term?", "must_include": ["10.49"]}
+{"id": "pp-147", "category": "should_refuse", "question": "How much interest would I pay on a new construction loan?"}
+{"id": "pp-076", "category": "branch_info", "question": "The Hy-Vee branch is closing — which branches should its members use?", "must_include": ["Key West", "Sycamore"]}
+{"id": "pp-006", "category": "temporal_as_of", "question": "Back in May 2026, what APY did the 10 month fixed jumbo certificate special pay?", "must_include": ["3.90%"]}
+{"id": "pp-017", "category": "stale_trap", "question": "APR on a 7-year loan for a 2024 model car?", "must_include": ["5.59%"]}
+{"id": "pp-046", "category": "tier_disambiguation", "question": "What's the best APY I can get on Share Savings?", "must_include": ["0.20", "25,000"]}
+{"id": "pp-102", "category": "should_refuse", "question": "What time does the Mullan Avenue location open?"}
+{"id": "pp-088", "category": "temporal_as_of", "question": "How many employees took volunteer time off?", "must_include": ["294"]}
+{"id": "pp-094", "category": "list_completeness", "question": "Does Dupaco support Apple Pay or Google Pay?", "must_include": ["Apple Pay", "Google Pay"]}
+{"id": "pp-082", "category": "stale_trap", "question": "Can I become a member online? Where?", "must_include": ["join.dupaco.com"]}
+{"id": "pp-101", "category": "entity_attribution", "question": "Do you offer student loans?", "must_include": ["student loan"]}

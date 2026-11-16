@@ -141,9 +141,12 @@ def _remove_phrase(norm: str, phrase: str) -> str:
 
 
 def _singular(tok: str) -> str:
-    if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
-        return tok[:-1]
-    return tok
+    """Simple English singular: lobbies -> lobby, loans -> loan; Illinois, bonus, address stay."""
+    if len(tok) <= 3 or not tok.endswith("s") or tok.endswith(("ss", "is", "us", "ous")):
+        return tok
+    if tok.endswith("ies") and len(tok) > 4:
+        return tok[:-3] + "y"
+    return tok[:-1]
 
 
 def product_key(name: str) -> str:

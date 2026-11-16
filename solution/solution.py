@@ -106,7 +106,8 @@ class KnowledgeSystem:
     def _answer(self, question, as_of=None):
         self.vocab.ensure()
         q = parse(question, self.vocab)
-        ref = as_of or q.ref_date
+        # A date in a "how did it change since May" question is the start of the change, not the view.
+        ref = as_of or (None if "change" in q.intents else q.ref_date)
         index = self.select_view(ref)
         if index is None:
             return Answer(text="I don't have information from that early; Dupaco's website records here start "

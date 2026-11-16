@@ -241,7 +241,8 @@ class PassageIndex:
                         title = v.title.split("|")[0].strip()
                         break
             texts.append(f"{title}\n{c.text}" if title else c.text)
-        m = llm.embed(texts)
+        from llm import EMBED_RETRIES
+        m = llm.embed(texts, retries=EMBED_RETRIES)
         if m is None:
             return                                      # dense search stays off for these chunks
         np = llm.np
@@ -257,7 +258,22 @@ class PassageIndex:
         top = sims.argpartition(-n)[-n:]
         return {int(i): float(sims[i]) for i in top}
 
-    def search(self, query_tokens: list[str], index: int, k: int = 8, accept=None, qvec=None):
+    def coverage(self, toks: set, groups) -> float:
+        """Share of the question's words (idf-weighted) found in `toks`. A word counts as found when it
+        or one of its alternatives is there; words that occur nowhere on the site are left out."""
+        total = got = 0.0
+        for primary, alts in groups:
+            options = [primary, *alts]
+            known = [o for o in options if self.df.get(o, 0) > 0]
+            if not known:
+                continue
+            w = max(self.idf(o) for o in known)
+            total += w
+            if any(o in toks for o in options):
+                got += w
+        return got / total if total else 0.0
+
+    def search(self, query_tokens: list[str], index: int, k: int = 8, accept=None, qvec=None, groups=None):
         """Top chunks visible in view `index`: (score, coverage, chunk, best ViewEntry, block idx, cosine).
         `accept(chunk_text)` filters candidates before ranking (pattern evidence such as a count).
         With `qvec` (question embedding) the nearest chunks by meaning join the keyword candidates."""
@@ -267,9 +283,8 @@ class PassageIndex:
         view = self.store.view(index)
         avg = self.total_len / max(1, len(self.chunks))
         idfs = {t: self.idf(t) for t in q}
-        total_idf = sum(idfs.values()) or 1.0
+        groups = groups if groups is not None else [(t, set()) for t in q]
         scores: dict[int, float] = defaultdict(float)
-        matched: dict[int, float] = defaultdict(float)
         for t in q:
             plist = self.postings.get(t)
             if not plist:
@@ -279,7 +294,6 @@ class PassageIndex:
                 c = self.chunks[cid]
                 f = c.tf[t]
                 scores[cid] += w * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * c.length / avg))     # BM25, b = 0.75
-                matched[cid] += w
         ranked = sorted(scores.items(), key=lambda x: -x[1])[: k * 40]
         ref = self.store.snapshots[index].taken_on
         out = []
@@ -307,7 +321,7 @@ class PassageIndex:
                     best = (cand, e, bidx)
             if best is None:
                 continue
-            coverage = matched[cid] / total_idf
+            coverage = self.coverage(set(c.tf), groups)
             cos = near.get(cid)
             if cos is None and near and self.vecs is not None and cid < len(self.vecs):
                 cos = float(self.vecs[cid] @ qvec)
@@ -345,6 +359,7 @@ MIN_COVERAGE = 0.45
 # default. Kept for a judge-scored run: set to "always" or "weak".
 COMPOSE_MODE = "never"
 STRONG_COVERAGE = 0.8       # extractive answer kept as is when the best passage covers this much of the question
+DENSE_OK_WITH_EVIDENCE = 0.45
 DENSE_OK = 0.55             # cosine above which a passage counts as on-topic even with few shared words
 COMPOSE_PASSAGES = 6
 COMPOSE_TIMEOUT = 4.0
@@ -362,7 +377,7 @@ COMPOSE_SYSTEM = (
     "- After each fact, cite the excerpt number in square brackets, like [1]."
 )
 _DATE_NAMES = _MONTH_NAMES | {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "today"}
-_ATTR_WORDS = {"hours": ("hours", "hour", "open", "time", "times"), "address": ("address", "located", "location"),
+_ATTR_WORDS = {"hours": ("hours", "hour", "open", "opening", "close", "closing", "time", "times"), "address": ("address", "located", "location"),
                "phone": ("phone", "number", "call")}
 # A block opening with a bold label starts a new section ("**Drive-up** Monday-Friday: 8 a.m.-6 p.m.").
 _SECTION_START = re.compile(r"^\s*(?:\*\*|__)[^*_\n]{1,40}(?:\*\*|__)")
@@ -415,9 +430,13 @@ class PassageAnswerer:
         raw = tokens(q.text)
         date_words = {w for w in raw if w.isdigit() or w in _MONTH_NAMES} if q.ref_date else set()
         words = [t for t in raw if t not in STOP and t not in _QUESTION_NOISE and t not in date_words]
+        # Abbreviations the site defines are alternatives: "atm" or "automated teller machine".
+        self._alts = {}
         for w in list(words):
             for exp in self.ks.vocab.aliases.get(w, ()):
-                words.extend(stem(x) for x in exp)
+                alt = [stem(x) for x in exp if stem(x) not in STOP]
+                self._alts.setdefault(w, set()).update(alt)
+                words.extend(alt)
         # Words whose evidence is a pattern, not the word: "address" -> a street address, "hours" -> times.
         pattern_words = set()
         attr = q.attribute or ""
@@ -451,18 +470,27 @@ class PassageAnswerer:
             return not counting or _has_count(text, qset)
         qvec = self.ks.question_vector(q.text)
         # Questions that need such evidence look at a wider pool, filtered before ranking.
-        results = idx.search(query, index, k=40 if strict else 15, accept=accept if strict else None, qvec=qvec)
+        expansions = {a for alts in self._alts.values() for a in alts} - set(self._alts)
+        groups = [(t, self._alts.get(t, set())) for t in query if t not in expansions or t in self._alts]
+        results = idx.search(query, index, k=40 if strict else 15, accept=accept if strict else None, qvec=qvec,
+                             groups=groups)
         if not results:
             return self._refusal()
         common = {stem(w) for w in STOP | {"dupaco", "branch", "branches", "visa", "credit", "union"}}
         names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
 
+        rarest = max(names, key=idx.idf) if names else None
+
         def evident(r):
             c, entry = r[2], r[3]
             ctoks = set(tokens(c.text))
             title_toks = set(tokens(entry.version.title))
-            if any(n not in ctoks and n not in title_toks for n in names):
-                return False
+            # Names from the question: the rarest must appear, and at least half of them
+            # ("Galena, Illinois" vs a page writing "Galena, IL").
+            if names:
+                present = [n for n in names if n in ctoks or n in title_toks]
+                if rarest not in present or 2 * len(present) < len(names):
+                    return False
             if any(not e.search(c.text) for e in evidence):
                 return False
             if counting and not _has_count(c.text, qset):
@@ -473,14 +501,15 @@ class PassageAnswerer:
             if not evident(r):
                 return False
             cov, c, entry, cos = r[1], r[2], r[3], r[5]
-            if cos >= DENSE_OK:
+            # Close in meaning even with few shared words; looser when a pattern (time, address,
+            # URL, count) is already required of the passage.
+            if cos >= (DENSE_OK_WITH_EVIDENCE if evidence or counting else DENSE_OK):
                 return True                      # close in meaning even with few shared words
             ctoks = set(tokens(c.text))
             title_toks = set(tokens(entry.version.title))
             # words found only in the page title count half
-            extra = sum(idx.idf(t) for t in qset if t in title_toks and t not in ctoks)
-            total = sum(idx.idf(t) for t in qset) or 1.0
-            return cov + 0.5 * extra / total >= MIN_COVERAGE
+            with_title = idx.coverage(ctoks | title_toks, groups)
+            return cov + 0.5 * (with_title - cov) >= MIN_COVERAGE
 
         good = [r for r in results if ok(r)]
         if not good:

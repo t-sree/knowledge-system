@@ -30,8 +30,9 @@ p95 latency about 0.4 s; ingest about 40 s with embeddings, about 15–25 s with
 
 `answer(question, as_of)`:
 
-1. **Parse** (`question.py`, rules): intent (list, highest / lowest, yes-no, URL, past), attribute,
-   qualifiers (term, amount, model year, variant, business), dates named in the question.
+1. **Parse** (`question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
+   available), attribute (incl. hours / address wording), qualifiers (term, amount, model year, variant,
+   business), dates named in the question.
 2. **View**: latest snapshot on or before `as_of` (or a date in the question); before the first snapshot
    → refusal.
 3. **Fact path** (`answer.py`): products matched against the vocabulary (with a per-view quality prior),
@@ -40,7 +41,9 @@ p95 latency about 0.4 s; ingest about 40 s with embeddings, about 15–25 s with
    attribute class; content date; present over carried forward; newer snapshot; rate sheet first; value
    stated by more pages; extractor. Values compare as numbers. Tier rules: menus list every row, tiered
    products lead with the base tier, a named tier / "highest" picks that row. Rejected values go to
-   `conflict_note`, never into the text. A rate question with no matching fact is refused (no numbers).
+   `conflict_note`, never into the text. A rate question with no matching fact is refused (no numbers);
+   if the fact was listed in an earlier snapshot the answer says it isn't listed anymore. "What changed"
+   questions are answered from the fact timeline.
 4. **Passage path** (`passages.py`): hybrid BM25 + embedding search inside the view, weighted by page
    type, presence and recency; the evidence a question needs must be in the passage (a time for hours, a
    street address, a URL, a year for "when", a count for "how many", every specific name in the
@@ -77,5 +80,6 @@ python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
 ```
 
 Dev tools (not used by the solution): `dev/ask.py` (answers with parse and score per question),
-`dev/questions.jsonl` (our own 40 questions), `dev/compare_modes.py`, `dev/inspect_*.py` reports.
+`dev/questions.jsonl` (our own 47 questions), `dev/paraphrases.jsonl` (our rewordings of the public
+questions), `dev/compare_modes.py`, `dev/inspect_*.py` reports.
 Issues found while testing are logged in `docs/ISSUES.md`.

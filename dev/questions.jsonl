@@ -38,3 +38,10 @@
 {"id": "dev-038", "category": "should_refuse", "question": "What is the address of the Cedar Rapids Westdale branch?"}
 {"id": "dev-039", "category": "stale_trap", "question": "How many times has Forbes named Dupaco a top credit union?", "must_include": ["fifth"]}
 {"id": "dev-040", "category": "branch_info", "question": "What is the Platteville branch address?", "must_include": ["1100 E. Business Highway 151"]}
+{"id": "dev-041", "category": "change", "question": "Did the 10-month jumbo certificate special rate change since May?", "must_include": ["3.90%", "4.00%"]}
+{"id": "dev-042", "category": "change", "question": "When did the 17-month certificate special go up?", "must_include": ["4.10%"]}
+{"id": "dev-043", "category": "change", "question": "How has the 30-year fixed purchase mortgage rate for loans of $832,750 or less changed?", "must_include": ["6.125%", "7.25%"]}
+{"id": "dev-044", "category": "should_refuse", "question": "What is the 25-month certificate special APY?"}
+{"id": "dev-045", "category": "should_refuse", "question": "Is the 25-month jumbo certificate special still offered?"}
+{"id": "dev-046", "category": "current_value", "question": "Is the 17-month certificate special still available?", "must_include": ["4.10%"]}
+{"id": "dev-047", "category": "branch_info", "question": "What time does the drive-up open on Saturday?", "must_include": ["a.m."]}

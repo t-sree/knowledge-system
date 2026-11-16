@@ -34,6 +34,7 @@ ATTR_LABEL = {"apy": "APY", "apr": "APR", "dividend_rate": "dividend rate", "rat
               "routing_number": "routing number", "phone": "phone number", "address": "address"}
 _GOOD_PAGES = ("rate_sheet", "product", "promo", "info")
 MIN_SCORE = 0.5
+MIN_SCORE_NARROWED = 0.3
 MAX_ROWS = 30
 
 
@@ -168,7 +169,7 @@ class FactAnswerer:
         V = self.ks.vocab
         vidx = R.view_index(index)
         rate_question = q.attribute in RATE_ATTRS or q.attribute is None and (
-            q.intents & {"yesno", "high", "low", "url"})
+            q.intents & {"yesno", "high", "low", "url", "change", "available"})
         if not rate_question and not q.attribute:
             return None
 
@@ -177,6 +178,17 @@ class FactAnswerer:
         for k in vidx:
             if rate_question and k[1] in RATE_ATTRS or not rate_question and k[1] == q.attribute:
                 view_products.setdefault(k[0], set()).add(k[1])
+        # A model year in the question only fits products whose rates are tiered by model year.
+        if q.model_year is not None:
+            with_years = {p: a for p, a in view_products.items()
+                          if p in V.products and "model_year" in V.products[p].qualifier_kinds}
+            if with_years:
+                view_products = with_years
+        if "available" in q.intents and rate_question:
+            # products seen in any snapshot, so a discontinued one can still be recognised
+            for k in self.ks.facts.by_key:
+                if k[1] in RATE_ATTRS:
+                    view_products.setdefault(k[0], set()).add(k[1])
 
         # site-wide attributes (routing number): no product needed
         if not rate_question and "" in view_products:
@@ -186,7 +198,9 @@ class FactAnswerer:
                 return self._compose_simple(keys, index, ref_date, past, snapshot_date)
 
         scored = self.score_products(q, view_products, index)
-        if not scored or scored[0][0] < MIN_SCORE:
+        # Narrowed to products tiered by model year, a weaker name match is enough ("2025 car loan").
+        min_score = MIN_SCORE_NARROWED if q.model_year is not None and len(view_products) <= 8 else MIN_SCORE
+        if not scored or scored[0][0] < min_score:
             return None
         best = scored[0][0]
         if "list" in q.intents:
@@ -197,7 +211,7 @@ class FactAnswerer:
         leftover = set.intersection(*(left for _, _, left in chosen)) if chosen else set()
         # A variant word seen elsewhere on the site that these products never have
         # ("adjustable" for a product with only fixed rates): the asked variant isn't published.
-        variant_words = {w for v in V.variants for w in v.split()}
+        variant_words = {w for v in V.rate_variants for w in v.split()}
         missing_variant = {w for w in leftover if w in variant_words}
         if missing_variant and rate_question:
             return self._refusal(q)
@@ -208,7 +222,7 @@ class FactAnswerer:
         # Candidate groups: the best match(es), then each further product above the threshold.
         # Pass 1 only accepts groups that explain every question word known to the vocabulary;
         # pass 2 accepts the best group that has fitting rows ("share certificate").
-        groups = [chosen] + [[c] for c in scored if c not in chosen and c[0] >= MIN_SCORE][:5]
+        groups = [chosen] + [[c] for c in scored if c not in chosen and c[0] >= min_score][:5]
         for strict in (True, False):
             for group in groups:
                 left = set.intersection(*(lf for _, _, lf in group))
@@ -216,10 +230,47 @@ class FactAnswerer:
                     continue
                 rows = self._group_rows(q, [p for _, p, _ in group], vidx, index, ref_date)
                 if rows:
+                    if "available" in q.intents:
+                        return self._compose_available(q, rows, past, snapshot_date)
                     return self._compose_rows(q, rows, past, snapshot_date)
         if rate_question:
+            # Listed in an earlier snapshot but not in this one: the product was discontinued.
+            gone = self._last_listed(q, [p for _, p, _ in chosen], index)
+            if gone is not None:
+                return self._discontinued(q, gone)
             return self._refusal(q)
         return None
+
+    # ================================================================== discontinued products
+    def _last_listed(self, q, products, index):
+        """Snapshot record in which a matching fact was last stated, if it was stated before `index`."""
+        store = self.ks.store
+        last = None
+        for k, sightings in self.ks.facts.by_key.items():
+            if k[0] not in products or k[1] not in RATE_ATTRS:
+                continue
+            kinds = self.ks.vocab.products[k[0]].qualifier_kinds if k[0] in self.ks.vocab.products else set()
+            if not self._compatible(q, dict(k[2]), kinds, True):
+                continue
+            for s in sightings:
+                if s.snapshot_index < index and s.page_type in ("rate_sheet", "product", "promo", "info"):
+                    if last is None or s.snapshot_index > last:
+                        last = s.snapshot_index
+        if last is None:
+            return None
+        return store.snapshots[last]
+
+    @staticmethod
+    def _discontinued(q, rec) -> Answer:
+        month = date.fromisoformat(rec.taken_on).strftime("%B")
+        return Answer(text=(f"That isn't listed on Dupaco's website anymore: it no longer appears on the rate pages "
+                            f"(it was last listed in {month}). Please contact Dupaco for current options."),
+                      sources=[], confident=False)
+
+    def _compose_available(self, q, rows, past, snapshot_date) -> Answer:
+        ans = self._compose_rows(q, rows, past, snapshot_date)
+        ans.text = "Yes, it is still listed. " + ans.text
+        return ans
 
     def _group_rows(self, q, products, vidx, index, ref_date):
         allow_business = "list" in q.intents
@@ -358,7 +409,48 @@ class FactAnswerer:
         my = d.get("model_year", (0, 0))
         return (p, d.get("account_type", ""), tuple(d.get("variant", ())), -my[1], d.get("term", 0), tier[1], tier[0])
 
+    def _compose_changes(self, q, rows) -> Answer:
+        """How a value moved across the snapshots (from the fact timeline)."""
+        T = self.ks.timeline
+        lines, used = [], []
+        # The attribute the question names; a plain "rate" means the interest rate where one is published.
+        order = {"apy": ("apy", "dividend_rate"), "apr": ("apr", "rate"), "dividend_rate": ("dividend_rate", "apy"),
+                 "rate": ("rate", "apy", "apr", "dividend_rate")}.get(q.attribute or "", ("apy", "apr", "rate",
+                                                                                         "dividend_rate"))
+        for p, rq, attrs in rows[:8]:
+            attr = next((a for a in order if a in attrs), None)
+            if attr is None:
+                continue
+            res = attrs[attr]
+            periods = T.periods(res.key)
+            if not periods:
+                continue
+            name = self._row_name(p, dict(rq), res.winner.sighting.fact)
+            label = ATTR_LABEL.get(attr, attr)
+            if len(periods) == 1:
+                pr = periods[0]
+                lines.append(f"{name}: no change, {self._fmt_value(attr, pr.value)} in every snapshot from "
+                             f"{_fmt_date(pr.first_date)} to {_fmt_date(pr.last_date)}")
+            else:
+                steps = []
+                for i, pr in enumerate(periods):
+                    when = (f"from {_fmt_date(pr.first_date)}" if i == len(periods) - 1 else
+                            f"{_fmt_date(pr.first_date)}" + (f" to {_fmt_date(pr.last_date)}"
+                                                             if pr.last_date != pr.first_date else ""))
+                    steps.append(f"{pr.value} ({when})")
+                lines.append(f"{name} {label}: " + " → ".join(steps))
+            used.append((p, rq, attrs))
+        if not lines:
+            return self._compose_rows_plain(q, rows, False, "")
+        text = lines[0] + "." if len(lines) == 1 else "How the rates changed:\n" + "\n".join(f"- {ln}" for ln in lines)
+        return self._finish(text, used)
+
     def _compose_rows(self, q, rows, past, snapshot_date) -> Answer:
+        if "change" in q.intents:
+            return self._compose_changes(q, sorted(rows, key=self._sort_key_for(q) if q.variants else self._sort_key))
+        return self._compose_rows_plain(q, rows, past, snapshot_date)
+
+    def _compose_rows_plain(self, q, rows, past, snapshot_date) -> Answer:
         rows = sorted(rows, key=self._sort_key_for(q) if q.variants else self._sort_key)
         if "yesno" in q.intents and q.percents:
             return self._compose_verify(q, rows, past, snapshot_date)

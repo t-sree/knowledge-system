@@ -34,8 +34,10 @@ charges price pay pays paying earn earns earning return minimum min maximum max 
 address hours hour open opening balance link url website webpage page
 """.split())
 _QUALIFIER_WORDS = set("""
-month months mo year years yr term terms model vehicle car truck new used
+month months mo year years yr term terms model new used
 highest lowest best top most least cheapest tier tiers level levels
+over under each carry carries buy buying bought plan planning thinking looking would like
+change changed changes since go went up down increase increased decrease decreased raise raised rise rose drop dropped before after
 """.split())
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
                  "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "eighteen": 18,
@@ -54,7 +56,14 @@ _HIGH = re.compile(r"\b(highest|best|top|maximum|max|most)\b", re.I)
 _LOW = re.compile(r"\b(lowest|cheapest|least|smallest)\b", re.I)
 _YESNO = re.compile(r"^\s*(do|does|is|are|can|will|did|has|have)\b", re.I)
 _PAST = re.compile(r"\b(was|were|used to|previously|back in|as of)\b", re.I)
-_CHANGE = re.compile(r"\b(change|changed|changes|increase|increased|decrease|decreased|go up|went up|go down|went down)\b", re.I)
+_CHANGE = re.compile(r"\b(change|changed|changes|increase|increased|decrease|decreased|go up|went up|go down|went down|"
+                     r"raise|raised|lower|lowered|drop|dropped|rise|rose)\b", re.I)
+# Hours: "hours", "what time ...", or opening / closing of lobbies / drive-ups / branches in general.
+_HOURS = re.compile(r"\bhours?\b|\bwhat time\b|\b(?:lobby|lobbies|drive[- ]?(?:up|thru|through)s?)\b[^?]*\b(?:open|close)", re.I)
+_WHERE = re.compile(r"\bwhere is\b|\blocated\b|\bstreet address\b", re.I)
+# Is something still offered / available / open, or has it been discontinued?
+_AVAILABLE = re.compile(r"\bstill\b[^?]*\b(?:offer|offered|available|open|exist|sold|valid|running)|\bno longer\b|"
+                        r"\bdiscontinued\b|\bstill (?:have|has|offer)\b", re.I)
 _VEHICLE = re.compile(r"\b(model|vehicle|car|truck|suv|motorcycle|boat|rv|atv)\b", re.I)
 _BUSINESS = re.compile(r"\bbusiness\b", re.I)
 
@@ -133,10 +142,13 @@ def parse(question: str, vocab) -> Query:
             attr = "dividend_rate"
         elif "yield" in low:
             attr = "apy"
-        elif any(w in low for w in ("pay", "pays", "earn", "earns", "interest")):
+        # "pay"/"earn" ask for a rate, but a capitalised "Pay" is a name ("Apple Pay")
+        elif re.search(r"\b(?:pay|pays|paying|earn|earns|interest)\b", t):
             attr = "rate"
-        elif "hours" in low or "hour" in low:
+        elif _HOURS.search(t):
             attr = "hours"
+        elif _WHERE.search(t):
+            attr = "address"
     q.attribute = attr
 
     # intents
@@ -154,6 +166,8 @@ def parse(question: str, vocab) -> Query:
         q.intents.add("past")
     if _CHANGE.search(t):
         q.intents.add("change")
+    if _AVAILABLE.search(t):
+        q.intents.add("available")
 
     # content words for product matching (abbreviations expanded with the site's own definitions)
     # words of dates named in the question are not content
