@@ -421,6 +421,18 @@ def named_terms(question: str, common: set[str]) -> list[str]:
     return out
 
 
+def _with_title(part: str, title: str) -> str:
+    """Prefix a passage with its page's title when the passage doesn't name the page's subject
+    ("Student Loans: Whether you need to fill the funding gap ...")."""
+    head = (title or "").split("|")[0].strip()
+    if not head or len(head) > 80:
+        return part
+    words = {t for t in tokens(head) if t not in STOP and len(t) > 2}
+    if not words or words & set(tokens(part)):
+        return part
+    return f"{head}: {part}"
+
+
 def _loose(text: str) -> str:
     """Comparison form: lower case, unified dashes and quotes, single spaces."""
     t = (text or "").lower().replace("–", "-").replace("—", "-").replace("’", "'").replace("“", '"').replace("”", '"')
@@ -619,7 +631,8 @@ class PassageAnswerer:
                 if r[2].text in used:
                     continue
                 used.add(r[2].text)
-                parts.append(self._part(r, query) if _loose(t) in _loose(self._part(r, query)) else r[2].text)
+                part = self._part(r, query) if _loose(t) in _loose(self._part(r, query)) else r[2].text
+                parts.append(_with_title(part, r[3].version.title))
             text = "\n\n".join(parts)
             if past:
                 text = f"As of {snapshot_date}: " + text

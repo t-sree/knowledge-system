@@ -162,5 +162,10 @@ class Vocabulary:
                     out.extend(exp)
         return out
 
+    def variant_words(self) -> set[str]:
+        """Words used in product variants anywhere on the site ("adjustable", "jumbo"), 4+ letters so
+        fragments of table headings ("up", "or") don't count."""
+        return {w for v in self.variants for w in v.split() if len(w) >= 4 and w.isalpha()}
+
     def product_display(self, pkey: str) -> str:
         return pkey

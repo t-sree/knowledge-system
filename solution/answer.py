@@ -174,6 +174,7 @@ class FactAnswerer:
         V = self.ks.vocab
         vidx = R.view_index(index)
         self.last_score = 0.0
+        self.last_refusal = ""
         rate_question = q.attribute in RATE_ATTRS or q.attribute is None and (
             q.intents & {"yesno", "high", "low", "url", "change", "available"})
         if not rate_question and not q.attribute:
@@ -222,9 +223,10 @@ class FactAnswerer:
         leftover = set.intersection(*(left for _, _, left in chosen)) if chosen else set()
         # A variant word seen elsewhere on the site that these products never have
         # ("adjustable" for a product with only fixed rates): the asked variant isn't published.
-        variant_words = {w for v in V.rate_variants for w in v.split()}
+        variant_words = V.variant_words()       # words the site uses for product variants ("adjustable")
         missing_variant = {w for w in leftover if w in variant_words}
         if missing_variant and rate_question:
+            self.last_refusal = "missing_variant"      # the question names a variant this product lacks
             return self._refusal(q)
 
         if "url" in q.intents:
@@ -248,6 +250,7 @@ class FactAnswerer:
             # Listed in an earlier snapshot but not in this one: the product was discontinued.
             gone = self._last_listed(q, [p for _, p, _ in chosen], index)
             if gone is not None:
+                self.last_refusal = "discontinued"
                 return self._discontinued(q, gone)
             return self._refusal(q)
         return None

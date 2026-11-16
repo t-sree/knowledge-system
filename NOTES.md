@@ -8,8 +8,8 @@ are read by gpt-4o-mini. `conflicts()` lists contradictions found within each sn
 conflicts F1 1.0, resolution 1.0; 19 conflicts on the public snapshots).
 
 Local results (no judge), mean item score: public 0.884, our dev set 1.000, our rewordings 0.972, our
-probe questions 0.933; selftest final 1.0. Public official final 0.857 with the key (p50 0.37 s, p95
-~3.7 s — speed still to be tuned), 0.859 without the key (p95 0.1 s). Ingest 40–90 s with embeddings.
+probe questions 0.933; selftest final 1.0. Public official final 0.871 with the key (p50 0.4 s, p95
+~2.0–2.2 s), 0.859 mean without the key (p95 0.1 s). Ingest 40–90 s with embeddings.
 
 ## Approach
 
@@ -35,12 +35,14 @@ probe questions 0.933; selftest final 1.0. Public official final 0.857 with the 
 0. The rules path below runs first. If it is confident (an exact site-wide fact, a rate with a strong
    product match covering every term asked, or a passage covering most of the question with the needed
    evidence) its answer is returned. Otherwise **gpt-4o-mini** (`understand.py`) reads the question in
-   one JSON call: route (rate fact / passage / not on the site), products chosen only from a candidate
-   list of real product keys, attribute, terms, model year, amount, variants, intent, and which retrieved
-   passages answer it, with word-for-word quotes that code verifies. The answer is still built by code
+   one compact JSON call: route (rate fact / passage / not on the site), products chosen only from a
+   candidate list of real product keys, attribute, terms, model year, amount, variants, intent, and the
+   ids of the numbered passage sentences that answer it (short reply = fast call, ~1.2 s). The answer is still built by code
    from facts and the site's own sentences; the same evidence checks apply; an LLM refusal never
-   overrides a rate found in the facts. Every OpenAI call has an enforced deadline; on failure the rules
-   answer stands.
+   overrides a rate found in the facts, nor a rules refusal with a concrete reason (variant not offered,
+   product discontinued); an LLM product pick is rejected if the question names a product word it
+   doesn't carry. Every OpenAI call has an enforced deadline (chat 2.5 s); on failure the rules answer
+   stands.
 1. **Parse** (`question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
    available), attribute (incl. hours / address wording), qualifiers (term, amount, model year, variant,
    business), dates named in the question.

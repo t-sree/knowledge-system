@@ -161,6 +161,8 @@ class KnowledgeSystem:
             site_wide = q.attribute and q.attribute not in RATE_ATTRS and not q.products and ans.confident \
                 and self.fact_answerer.last_score == 0.0
             strong = ans.confident and (site_wide or self.fact_answerer.last_score >= STRONG_MATCH)
+            # A refusal with a concrete reason (asked variant not offered, product discontinued) is final.
+            strong = strong or self.fact_answerer.last_refusal in ("missing_variant", "discontinued")
             return ans, strong
         if q.attribute in RATE_ATTRS:
             # Rates are only ever answered from extracted facts; no matching fact = not published.
@@ -186,6 +188,8 @@ class KnowledgeSystem:
             return None
         if u is None:
             return None
+        if u["route"] == "rate" and not self._products_explain(q, u["products"]):
+            return None                          # the LLM picked a product the question doesn't name
         Understander.apply(q, u)
         if len(rules_terms) > len(q.terms):
             q.terms = list(rules_terms)          # the question names more terms than the LLM returned
@@ -198,6 +202,27 @@ class KnowledgeSystem:
         ref_date = ref if ref and ref >= rec.taken_on else rec.taken_on
         past = bool(as_of) or (q.ref_date is not None and index < len(self.store.snapshots) - 1)
         return self._answer_understood(q, u, index, ref_date, rec, past)
+
+    def _products_explain(self, q, products) -> bool:
+        """The chosen products must account for the question's product words: a word the site uses for
+        products or variants ("construction", "adjustable") that none of the chosen products carries means
+        the LLM substituted a different product. Words unknown to the site ("car") are not held against it."""
+        V = self.vocab
+        words = set()
+        for p in products:
+            info = V.products.get(p)
+            if info is not None:
+                words |= info.key_words | info.section_words | info.page_words
+        variant_words = V.variant_words()       # words the site uses for product variants ("adjustable")
+        for k in self.facts.by_key:
+            if k[0] in products:
+                for v in dict(k[2]).get("variant", ()):
+                    words |= set(v.split())
+        for w in q.content:
+            if w in words or (w not in V.idf and w not in variant_words):
+                continue
+            return False
+        return True
 
     def _answer_understood(self, q, u, index, ref_date, rec, past):
         if u["route"] == "rate":
