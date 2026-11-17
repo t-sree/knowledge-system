@@ -63,14 +63,3 @@ class Timeline:
                                   valid_from=w.fact.effective, valid_to=w.expires, sources=[res.winner]))
         self._cache[key] = out
         return out
-
-    def value_at(self, key: tuple, index: int) -> Optional[Period]:
-        for p in self.periods(key):
-            if p.first_index <= index <= p.last_index:
-                return p
-        return None
-
-    def changes(self, key: tuple) -> list[tuple[Period, Period]]:
-        """Consecutive periods with different values: (before, after)."""
-        ps = self.periods(key)
-        return [(a, b) for a, b in zip(ps, ps[1:]) if not same_value(a.fact, b.fact)]

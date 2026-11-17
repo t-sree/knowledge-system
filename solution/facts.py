@@ -111,10 +111,6 @@ class FactHistory:
                     self.qualifier_values.setdefault(q, set()).update(vals)
         self._views.clear()
 
-    def history(self, key: tuple) -> list[Sighting]:
-        """Every sighting of one fact across all snapshots, oldest first."""
-        return self.by_key.get(key, [])
-
     def sightings_in_view(self, index: int) -> list[ViewSighting]:
         """All sightings visible as of snapshot `index`, each flagged present or carried forward."""
         cached = self._views.get(index)
@@ -126,7 +122,3 @@ class FactHistory:
                 out.append(ViewSighting(s, entry.present))
         self._views[index] = out
         return out
-
-    @property
-    def total(self) -> int:
-        return sum(len(v) for v in self.by_version.values())

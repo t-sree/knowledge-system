@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(next(d / "harness" for d in Path(__file__).resolve().parents if (d / "harness" / "contract.py").exists())))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from contract import Answer, Conflict, Snapshot  # noqa: E402
+from contract import Answer, Snapshot  # noqa: E402
 
 from answer import RATE_ATTRS, FactAnswerer  # noqa: E402
 from classify import PageClassifier  # noqa: E402
@@ -50,6 +50,9 @@ class KnowledgeSystem:
         self.register = ConflictRegister(self)
         self.understander = Understander(self)
         self._qvecs: dict = {}
+        self._last_understanding = None
+        self._last_from_facts = False
+        self._last_meaning_only = False
         self._cache: dict = {}
         self.answer_errors = 0
         self.passage_errors = 0
@@ -80,7 +83,7 @@ class KnowledgeSystem:
         except Exception:
             self.passage_errors += 1
 
-    def question_vector(self, text: str):
+    def _question_vector(self, text: str):
         """Embedding of a question (cached), or None without an LLM."""
         if not self.llm.enabled:
             return None
@@ -91,7 +94,7 @@ class KnowledgeSystem:
         return self._qvecs[key]
 
     # ------------------------------------------------------------------ I: view selector
-    def select_view(self, ref_date):
+    def _select_view(self, ref_date):
         """Latest snapshot taken on or before `ref_date` (None = latest). None if before the first."""
         snaps = self.store.snapshots
         if not snaps:
@@ -122,21 +125,29 @@ class KnowledgeSystem:
         rules_ans, strong = self._rules_answer(q, as_of)
         if strong or not self.llm.enabled:
             return rules_ans
-        rules_from_facts = self._last_from_facts
+        rules_products = set(self.fact_answerer.last_products) if self._last_from_facts else set()
         q2 = copy.deepcopy(q)
         llm_ans = self._llm_answer(q2, as_of, rules_terms=q.terms)
         if llm_ans is None:
             return rules_ans
-        if not llm_ans.confident and rules_from_facts and rules_ans.confident:
-            # A rate the rules found in the extracted facts is exact; an LLM refusal does not override it.
+        # The LLM may only override the rules when it adds something:
+        if not llm_ans.confident and rules_ans.confident and not self._last_meaning_only:
+            # A refusal doesn't replace an answer the rules found on real evidence (a rate fact, or a
+            # passage with the question's own words); it does replace a passage that was only close in
+            # meaning ("timeshare loan" -> an unrelated loan page).
             return rules_ans
+        u = self._last_understanding
+        if (u is not None and u["route"] == "rate" and rules_products and rules_ans.confident
+                and ("list" in q.intents or "list" in q2.intents)
+                and set(u["products"]) < rules_products):
+            return rules_ans                     # a narrower product list than the rules already gave
         return llm_ans
 
     # ------------------------------------------------------------------ rules path
     def _view(self, q, as_of):
         # A date in a "how did it change since May" question is the start of the change, not the view.
         ref = as_of or (None if "change" in q.intents else q.ref_date)
-        return ref, self.select_view(ref)
+        return ref, self._select_view(ref)
 
     def _too_early(self):
         return Answer(text="I don't have information from that early; Dupaco's website records here start "
@@ -145,6 +156,7 @@ class KnowledgeSystem:
     def _rules_answer(self, q, as_of):
         """(answer, confident?) from the rules path."""
         self._last_from_facts = False
+        self._last_meaning_only = False
         ref, index = self._view(q, as_of)
         if index is None:
             return self._too_early(), True
@@ -172,6 +184,7 @@ class KnowledgeSystem:
         except Exception:
             self.answer_errors += 1
             return FactAnswerer._refusal(q), False
+        self._last_meaning_only = self.passage_answerer.last_meaning_only
         return ans, ans.confident and self.passage_answerer.last_coverage >= STRONG_COVERAGE
 
     # ------------------------------------------------------------------ LLM path
@@ -181,6 +194,7 @@ class KnowledgeSystem:
         ref, index = self._view(q, as_of)
         if index is None:
             return self._too_early()
+        self._last_understanding = None
         try:
             u = self.understander.understand(q, index)
         except Exception:
@@ -188,6 +202,7 @@ class KnowledgeSystem:
             return None
         if u is None:
             return None
+        self._last_understanding = u
         if u["route"] == "rate" and not self._products_explain(q, u["products"]):
             return None                          # the LLM picked a product the question doesn't name
         Understander.apply(q, u)

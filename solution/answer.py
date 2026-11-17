@@ -15,7 +15,6 @@ Returns None when the fact path has no confident answer, so the caller can fall 
 """
 from __future__ import annotations
 
-import re
 from datetime import date
 from typing import Optional
 
@@ -32,7 +31,6 @@ ATTR_LABEL = {"apy": "APY", "apr": "APR", "dividend_rate": "dividend rate", "rat
               "points": "points", "min_open": "minimum to open", "min_earn": "minimum balance to earn",
               "min_balance": "minimum balance", "max_balance": "maximum balance", "fee": "fee",
               "routing_number": "routing number", "phone": "phone number", "address": "address"}
-_GOOD_PAGES = ("rate_sheet", "product", "promo", "info")
 MIN_SCORE = 0.5
 MIN_SCORE_NARROWED = 0.3
 MAX_ROWS = 30
@@ -175,6 +173,7 @@ class FactAnswerer:
         vidx = R.view_index(index)
         self.last_score = 0.0
         self.last_refusal = ""
+        self.last_products = []
         rate_question = q.attribute in RATE_ATTRS or q.attribute is None and (
             q.intents & {"yesno", "high", "low", "url", "change", "available"})
         if not rate_question and not q.attribute:
@@ -243,6 +242,7 @@ class FactAnswerer:
                     continue
                 rows = self._group_rows(q, [p for _, p, _ in group], vidx, index, ref_date)
                 if rows:
+                    self.last_products = sorted({p for p, _, _ in rows})
                     if "available" in q.intents:
                         return self._compose_available(q, rows, past, snapshot_date)
                     return self._compose_rows(q, rows, past, snapshot_date)

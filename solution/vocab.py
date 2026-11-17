@@ -16,7 +16,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from extract import _norm, _singular, is_product_phrase, product_key
+from extract import _norm, _singular, is_product_phrase
 
 _ABBR_PAREN = re.compile(r"\(([A-Z]{2,6})s?\)")          # find "(HELOC)" first, then look back
 _ABBR_BEFORE = re.compile(r"\b([A-Z]{2,6})s?\s*\(([A-Za-z][^()]{3,60})\)")
@@ -166,6 +166,3 @@ class Vocabulary:
         """Words used in product variants anywhere on the site ("adjustable", "jumbo"), 4+ letters so
         fragments of table headings ("up", "or") don't count."""
         return {w for v in self.variants for w in v.split() if len(w) >= 4 and w.isalpha()}
-
-    def product_display(self, pkey: str) -> str:
-        return pkey

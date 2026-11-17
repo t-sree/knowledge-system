@@ -13,7 +13,10 @@ probe questions 0.933; selftest final 1.0. Public official final 0.871 with the 
 
 ## Approach
 
-`build()` returns a `KnowledgeSystem`. `ingest(snapshot)` runs, per snapshot:
+`build()` returns a `KnowledgeSystem` with exactly the three contract methods: `ingest(snapshot)`,
+`answer(question, as_of=None)` and `conflicts()`. The other files in `solution/` are its helpers.
+
+`ingest(snapshot)` runs, per snapshot:
 
 1. **Page store** (`store.py`): every version of every page; URLs normalised (query variants merged);
    pages split into blocks with their heading path; blocks repeated on 10+ pages flagged as boilerplate.
@@ -37,12 +40,14 @@ probe questions 0.933; selftest final 1.0. Public official final 0.871 with the 
    evidence) its answer is returned. Otherwise **gpt-4o-mini** (`understand.py`) reads the question in
    one compact JSON call: route (rate fact / passage / not on the site), products chosen only from a
    candidate list of real product keys, attribute, terms, model year, amount, variants, intent, and the
-   ids of the numbered passage sentences that answer it (short reply = fast call, ~1.2 s). The answer is still built by code
-   from facts and the site's own sentences; the same evidence checks apply; an LLM refusal never
-   overrides a rate found in the facts, nor a rules refusal with a concrete reason (variant not offered,
-   product discontinued); an LLM product pick is rejected if the question names a product word it
-   doesn't carry. Every OpenAI call has an enforced deadline (chat 2.5 s); on failure the rules answer
-   stands.
+   ids of the numbered passage sentences that answer it (short reply = fast call, ~1.2 s). The answer
+   is still built by code from facts and the site's own sentences, with the same evidence checks. The
+   LLM may only override the rules when it adds something: an LLM refusal does not replace a rules
+   answer found on real evidence (a rate fact, or a passage containing the question's own words), only
+   one that was merely close in meaning; a narrower product list than the rules gave does not replace
+   theirs; a rules refusal with a concrete reason (variant not offered, product discontinued) is final;
+   an LLM product pick is rejected if the question names a product word it doesn't carry. Every OpenAI
+   call has an enforced deadline (chat 2.5 s); on failure the rules answer stands.
 1. **Parse** (`question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
    available), attribute (incl. hours / address wording), qualifiers (term, amount, model year, variant,
    business), dates named in the question.
@@ -83,8 +88,7 @@ from one snapshot to the next is an update and is not listed.
 - `OPENAI_API_KEY` (optional, paid API). Read from the environment, else from a `.env` file next to or
   above the submission. Used for `text-embedding-3-small` (product and passage retrieval, at ingest and
   one call per question) and `gpt-4o-mini` (question understanding for questions the rules are not sure
-  about). Free-text answer composition by the LLM is implemented but off (`COMPOSE_MODE` in
-  `passages.py`): it did not beat extractive answers on keyword scoring.
+  about). The LLM never writes answer text; answers are always the site's own values and sentences.
 - Without the key, or without the `openai` / `numpy` packages, everything runs rules-only.
 
 ## Running
@@ -95,6 +99,5 @@ python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
 
 Dev tools (not used by the solution): `dev/ask.py` (answers with parse and score per question),
 `dev/questions.jsonl` (our own 47 questions), `dev/paraphrases.jsonl` (our rewordings of the public
-questions), `dev/probes.jsonl` (hard new wordings), `dev/score_all.py` (all sets with latency),
-`dev/compare_modes.py`, `dev/inspect_*.py` reports.
+questions), `dev/probes.jsonl` (hard new wordings), `dev/score_all.py` (all sets with latency).
 Issues found while testing are logged in `docs/ISSUES.md`.

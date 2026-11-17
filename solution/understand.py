@@ -120,7 +120,7 @@ class Understander:
         products = {p: set(V.products[p].attributes) for p in self._rate_products()}
         lexical = [p for _, p, _ in self.ks.fact_answerer.score_products(q, products, index)[:N_PRODUCTS]]
         semantic = []
-        qv = self.ks.question_vector(q.text)
+        qv = self.ks._question_vector(q.text)
         if qv is not None and self.product_vecs:
             sims = [(float(vec @ qv), k) for k, vec in self.product_vecs.items()]
             semantic = [k for _, k in sorted(sims, reverse=True)[:N_PRODUCTS]]

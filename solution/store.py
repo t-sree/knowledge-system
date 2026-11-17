@@ -193,8 +193,3 @@ class PageStore:
         self._views[index] = out
         return out
 
-    def is_boilerplate(self, block: Block, index: int) -> bool:
-        return block.key in self.snapshots[index].boilerplate
-
-    def history(self, key: str) -> list[PageVersion]:
-        return self.versions.get(key, [])

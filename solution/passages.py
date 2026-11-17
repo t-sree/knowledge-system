@@ -214,11 +214,6 @@ class PassageIndex:
         return cid
 
     # ------------------------------------------------------------------ search
-    def present_pages(self, chunk, index: int) -> int:
-        view = self.store.view(index)
-        return len({pk for pk, si, _ in chunk.occurrences if (e := view.get(pk)) is not None
-                    and e.present and e.version.snapshot_index == si})
-
     def idf(self, t: str) -> float:
         n = max(1, len(self.chunks))
         return math.log(1 + (n - self.df.get(t, 0) + 0.5) / (self.df.get(t, 0) + 0.5))
@@ -358,28 +353,8 @@ _CAP_WORD = re.compile(r"(?<![\w$])([A-Z][\w$’'-]*[A-Za-z0-9])")
 _MONTH_NAMES = {"january", "february", "march", "april", "may", "june", "july", "august", "september",
                 "october", "november", "december"}
 MIN_COVERAGE = 0.45
-# gpt-4o-mini composition of passage answers. Measured on the public + dev sets it did not beat the
-# extractive answers (0.868 "always" / 0.846 "weak" vs 0.884 "never") and added ~1 s, so it is off by
-# default. Kept for a judge-scored run: set to "always" or "weak".
-COMPOSE_MODE = "never"
-STRONG_COVERAGE = 0.8       # extractive answer kept as is when the best passage covers this much of the question
 DENSE_OK_WITH_EVIDENCE = 0.45
 DENSE_OK = 0.55             # cosine above which a passage counts as on-topic even with few shared words
-COMPOSE_PASSAGES = 6
-COMPOSE_TIMEOUT = 4.0
-COMPOSE_SYSTEM = (
-    "You answer member questions for Dupaco Community Credit Union using ONLY the website excerpts "
-    "provided. Rules:\n"
-    "- Use only facts stated in the excerpts. Never add facts, numbers, phone numbers or advice that "
-    "are not in them.\n"
-    "- Copy numbers, dates, times, addresses, names and URLs exactly as written in the excerpts.\n"
-    "- If the excerpts do not answer the question, reply with exactly: NOT_FOUND\n"
-    "- If excerpts disagree, prefer the most recent dated excerpt and state that value.\n"
-    "- When details vary (for example hours by branch), say so and give the values with what they "
-    "apply to.\n"
-    "- Be brief: one to three sentences, or a short list. Plain text, no markdown headings.\n"
-    "- After each fact, cite the excerpt number in square brackets, like [1]."
-)
 _DATE_NAMES = _MONTH_NAMES | {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "today"}
 _ATTR_WORDS = {"hours": ("hours", "hour", "open", "opening", "close", "closing", "time", "times"), "address": ("address", "located", "location"),
                "phone": ("phone", "number", "call")}
@@ -388,7 +363,6 @@ _SECTION_START = re.compile(r"^\s*(?:\*\*|__)[^*_\n]{1,40}(?:\*\*|__)")
 _URL = re.compile(r"https?://|\bwww\.|\b[a-z0-9-]+\.(?:com|org|net)\b", re.I)
 _COMPARE = re.compile(r"\b(same|different|differ|vary|varies|all)\b", re.I)
 _HOW_MANY = re.compile(r"\bhow many\b|\bnumber of\b", re.I)
-_NUMBER_TOKEN = re.compile(r"^\d[\d,]*$")
 
 
 # A count: a number that is not part of a phone number, date or code, followed by up to three words.
@@ -447,6 +421,7 @@ class PassageAnswerer:
     def __init__(self, ks) -> None:
         self.ks = ks
         self.last_coverage = 0.0
+        self.last_meaning_only = False
 
     def query_tokens(self, q) -> tuple[list[str], set[str]]:
         """Stemmed query words (site-defined abbreviations expanded) and the words a pattern stands for."""
@@ -474,6 +449,7 @@ class PassageAnswerer:
         from contract import Answer, Source
         idx: PassageIndex = self.ks.passages
         self.last_coverage = 0.0
+        self.last_meaning_only = False
         query, _ = self.query_tokens(q)
         counting = bool(_HOW_MANY.search(q.text))
         # Evidence a chunk must contain for this kind of question: a time, an address, a phone number,
@@ -492,7 +468,7 @@ class PassageAnswerer:
             if any(not pt.search(text) for pt in evidence):
                 return False
             return not counting or _has_count(text, qset)
-        qvec = self.ks.question_vector(q.text)
+        qvec = self.ks._question_vector(q.text)
         # Questions that need such evidence look at a wider pool, filtered before ranking.
         expansions = {a for alts in self._alts.values() for a in alts} - set(self._alts)
         groups = [(t, self._alts.get(t, set())) for t in query if t not in expansions or t in self._alts]
@@ -528,33 +504,26 @@ class PassageAnswerer:
             # Close in meaning even with few shared words; looser when a pattern (time, address,
             # URL, count) is already required of the passage.
             if cos >= (DENSE_OK_WITH_EVIDENCE if evidence or counting else DENSE_OK):
-                return True                      # close in meaning even with few shared words
+                meaning_only.add(id(r))          # close in meaning even with few shared words
+                return True
             ctoks = set(tokens(c.text))
             title_toks = set(tokens(entry.version.title))
             # words found only in the page title count half
             with_title = idx.coverage(ctoks | title_toks, groups)
             return cov + 0.5 * (with_title - cov) >= MIN_COVERAGE
 
+        meaning_only: set[int] = set()
         good = [r for r in results if ok(r)]
         if not good:
             return self._refusal()
         self.last_coverage = good[0][1]          # how much of the question the best passage covers
+        # Accepted only because it is close in meaning, with few of the question's own words
+        self.last_meaning_only = id(good[0]) in meaning_only and good[0][1] < MIN_COVERAGE
         picks = self._picks(q, good, results, names, evident)
         parts = [self._part(r, query) for r in picks]
         text = "\n\n".join(p for p in parts if p)
         sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
                    for r in picks]
-
-        # gpt-4o-mini writes the answer from the best passages; checked against them before use.
-        llm = self.ks.llm
-        mode = getattr(self, "compose_mode", COMPOSE_MODE)   # "never" | "weak" | "always"
-        weak = good[0][1] < STRONG_COVERAGE or bool(_COMPARE.search(q.text))
-        if llm is not None and llm.enabled and (mode == "always" or mode == "weak" and weak):
-            composed = self._compose(q, good, picks, query, snapshot_date)
-            if composed == "NOT_FOUND":
-                return self._refusal()
-            if composed is not None:
-                text, sources = composed
         if past:
             text = f"As of {snapshot_date}: " + text
         return Answer(text=text, sources=sources, confident=True)
@@ -567,7 +536,7 @@ class PassageAnswerer:
         query, _ = self.query_tokens(q)
         expansions = {a for alts in self._alts.values() for a in alts} - set(self._alts)
         groups = [(t, self._alts.get(t, set())) for t in query if t not in expansions or t in self._alts]
-        qvec = self.ks.question_vector(q.text)
+        qvec = self.ks._question_vector(q.text)
         out = idx.search(query, index, k=n, qvec=qvec, groups=groups)
         evidence = []
         if (q.attribute or "") in EVIDENCE:
@@ -703,45 +672,6 @@ class PassageAnswerer:
             if nxt:
                 part = f"{part}\n{nxt[:600]}"
         return part
-
-    # ------------------------------------------------------------------ LLM composition
-    def _compose(self, q, good, picks, query, snapshot_date):
-        """(text, sources) from gpt-4o-mini, "NOT_FOUND", or None to keep the extractive answer."""
-        from contract import Source
-        excerpts, seen = [], set()
-        for r in list(picks) + list(good):
-            if len(excerpts) >= COMPOSE_PASSAGES:
-                break
-            if r[2].text in seen:
-                continue
-            seen.add(r[2].text)
-            excerpts.append((r, self._part(r, query) if r in picks else r[2].text))
-        lines = []
-        for i, (r, t) in enumerate(excerpts, 1):
-            v = r[3].version
-            info = v.info
-            date = (info.content_date if info is not None else None) or "undated"
-            ptype = info.page_type if info is not None else "page"
-            lines.append(f"[{i}] {v.title.split('|')[0].strip()} ({ptype}, {date}, {v.url})\n{t[:900]}")
-        user = (f"Question: {q.text}\nToday's date for this question: {snapshot_date}\n\n"
-                "Website excerpts:\n\n" + "\n\n".join(lines))
-        out = self.ks.llm.chat(COMPOSE_SYSTEM, user, max_tokens=260, timeout=COMPOSE_TIMEOUT)
-        if not out:
-            return None
-        if out.strip().upper().startswith("NOT_FOUND"):
-            return "NOT_FOUND"
-        cited = [int(n) for n in re.findall(r"\[(\d+)\]", out) if 0 < int(n) <= len(excerpts)]
-        text = re.sub(r"\s*\[\d+(?:,\s*\d+)*\]", "", out).strip()
-        # Every number in the answer must appear in the excerpts it was given.
-        source_text = " ".join(t for _, t in excerpts).replace(",", "")
-        for m in re.finditer(r"\d+(?:[.,:]\d+)*", text):
-            n = m.group(0).replace(",", "")
-            if n not in source_text:
-                return None
-        use = [excerpts[i - 1][0] for i in dict.fromkeys(cited)] or [excerpts[0][0]]
-        sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
-                   for r in use[:4]]
-        return text, sources
 
     @staticmethod
     def _extract(text: str, query: list[str]) -> str:

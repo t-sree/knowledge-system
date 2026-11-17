@@ -19,7 +19,6 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Optional
 
 from facts import ViewSighting
 from resolve import resolve, same_value
@@ -346,15 +345,3 @@ class ConflictRegister:
             if prev is None or (s["date"], s["pages"]) > (prev["date"], prev["pages"]):
                 best[s["value"]] = s
         return sorted(best.values(), key=lambda s: (s["date"], s["pages"]), reverse=True)
-
-    def current_count(self, words: set[str]) -> Optional[tuple[str, dict]]:
-        """(noun, newest statement) of a count whose noun contains one of `words` (stemmed)."""
-        from passages import tokens
-        best = None
-        for noun in self.counts:
-            if not set(tokens(noun)) & words:
-                continue
-            ranked = self._ranked_values(noun)
-            if ranked and (best is None or (ranked[0]["date"], ranked[0]["pages"]) > (best[1]["date"], best[1]["pages"])):
-                best = (noun, ranked[0])
-        return best
