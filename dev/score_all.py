@@ -49,8 +49,8 @@ def main():
             for i, sc, t in fails:
                 print(f"    {i} {sc:.2f} {t}")
     all_lat.sort()
-    print(f"all: p95={all_lat[int(0.95 * (len(all_lat) - 1))]:.2f}s  llm calls={ks.llm.calls} errors={ks.llm.errors} "
-          f"answer errors={ks.answer_errors}")
+    print(f"all: p95={all_lat[int(0.95 * (len(all_lat) - 1))]:.2f}s  llm calls={ks.pipeline.llm.calls} errors={ks.pipeline.llm.errors} "
+          f"answer errors={ks.pipeline.answer_errors}")
 
 
 if __name__ == "__main__":

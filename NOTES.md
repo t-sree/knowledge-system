@@ -13,8 +13,9 @@ probe questions 0.933; selftest final 1.0. Public official final 0.871 with the 
 
 ## Approach
 
-`build()` returns a `KnowledgeSystem` with exactly the three contract methods: `ingest(snapshot)`,
-`answer(question, as_of=None)` and `conflicts()`. The other files in `solution/` are its helpers.
+`build()` returns a `KnowledgeSystem` (`solution.py`) that defines exactly the three contract methods:
+`ingest(snapshot)`, `answer(question, as_of=None)` and `conflicts()`. Each hands the call to
+`pipeline.Pipeline`; the other files in `solution/` are its parts.
 
 `ingest(snapshot)` runs, per snapshot:
 

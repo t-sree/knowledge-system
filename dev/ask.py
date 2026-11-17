@@ -45,7 +45,7 @@ def main() -> None:
         n += 1
         if args.failing and sc["score"] >= 0.999:
             continue
-        q = parse(d["question"], ks.vocab)
+        q = parse(d["question"], ks.pipeline.vocab)
         text = a.text if args.full else a.text[:260].replace("\n", " | ")
         print(f"== {d['id']} [{d.get('category')}] score={sc['score']:.2f} {dt * 1000:.0f}ms conf={a.confident}")
         print(f"   Q: {d['question']}")
@@ -54,7 +54,7 @@ def main() -> None:
         print(f"   A: {text}")
         print(f"   src: {[s.url.split('.com', 1)[-1] for s in a.sources]}  must={d.get('must_include')} "
               f"expected_src={[u.split('.com', 1)[-1] for u in d.get('expected_sources', [])]}")
-    print(f"\nmean item score (unweighted, no judge): {total / max(n, 1):.3f} over {n}; errors {ks.answer_errors}")
+    print(f"\nmean item score (unweighted, no judge): {total / max(n, 1):.3f} over {n}; errors {ks.pipeline.answer_errors}")
 
 
 if __name__ == "__main__":
