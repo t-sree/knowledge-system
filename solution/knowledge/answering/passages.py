@@ -160,7 +160,7 @@ class PassageIndex:
         self._embedded = 0
 
     def add_snapshot(self, rec) -> None:
-        for page_key in rec.members:
+        for page_key in sorted(rec.members):          # sorted: chunk ids must not depend on set order
             v = self.store.versions[page_key][-1]
             ptype = v.info.page_type if v.info is not None else "info"
             if ptype == "listing":

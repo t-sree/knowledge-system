@@ -16,6 +16,7 @@ Returns None when the fact path has no confident answer, so the caller can fall 
 from __future__ import annotations
 
 from datetime import date
+from math import fsum
 from typing import Optional
 
 from contract import Answer, Source
@@ -90,30 +91,31 @@ class FactAnswerer:
             return []
         max_idf = max(V.idf.values()) if V.idf else 1.0
         # Words the site never uses for any product can't point elsewhere: they count less.
-        qsum = sum(V.idf.get(t, 0.3 * max_idf) for t in Q)
+        # Sums over sets use fsum (exactly rounded), so scores don't depend on set iteration order.
+        qsum = fsum(V.idf.get(t, 0.3 * max_idf) for t in Q)
         out = []
         for p in view_products:
             info = V.products.get(p)
             if info is None or not p:
                 continue
             kw, sw, pw = info.key_words, info.section_words, info.page_words
-            matched = 0.0
+            parts = []
             hit = set()
             for t in Q:
                 w = V.idf.get(t, max_idf)
                 if t in kw:
-                    matched += w
+                    parts.append(w)
                 elif t in sw or t in pw:
-                    matched += 0.6 * w              # section heading above its table / title or URL of its page
+                    parts.append(0.6 * w)           # section heading above its table / title or URL of its page
                 else:
                     continue
                 hit.add(t)
             if not hit:
                 continue
-            qcov = matched / qsum
+            qcov = fsum(parts) / qsum
             key_hit = kw & Q
             if key_hit:
-                pcov = sum(V.idf.get(t, max_idf) for t in key_hit) / sum(V.idf.get(t, max_idf) for t in kw)
+                pcov = fsum(V.idf.get(t, max_idf) for t in key_hit) / fsum(V.idf.get(t, max_idf) for t in kw)
                 qcov *= 0.7 + 0.3 * pcov                  # product names with many unasked words
             out.append((qcov * priors.get(p, 0.6), p, Q - hit))
         out.sort(key=lambda x: (-x[0], x[1]))

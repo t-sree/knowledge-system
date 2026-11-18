@@ -88,7 +88,7 @@ class FactHistory:
 
     def add_snapshot(self, rec) -> None:
         """Extract facts for every page present in the snapshot record (after classification)."""
-        for page_key in rec.members:
+        for page_key in sorted(rec.members):          # sorted: sighting order must not depend on set order
             version = self.store.versions[page_key][-1]
             if version.info is not None and version.info.page_type == "listing":
                 continue

@@ -57,7 +57,7 @@ class Pipeline:
 
     def ingest(self, snapshot: Snapshot) -> None:
         rec = self.store.add_snapshot(snapshot)
-        for key in rec.members:
+        for key in sorted(rec.members):
             try:
                 self.classifier.classify_version(self.store.versions[key][-1])
             except Exception:
