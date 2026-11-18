@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from resolve import Resolver, same_value
+from knowledge.facts.resolve import Resolver, same_value
 
 
 @dataclass

@@ -1,6 +1,6 @@
 """Matcher (component J, fact path) and Answer Composer (component K, templates).
 
-J  finds the products a question is about (closed vocabulary from vocab.py), the fact keys of
+J  finds the products a question is about (closed vocabulary from query/vocab.py), the fact keys of
    those products in the selected snapshot view whose qualifiers fit the question, and resolves
    each with the resolver (E).
 K  turns the winning facts into a member-facing answer with sources. Values rejected by the
@@ -20,8 +20,8 @@ from typing import Optional
 
 from contract import Answer, Source
 
-from extract import is_product_phrase, parse_label, product_key
-from resolve import same_value
+from knowledge.ingest.extract import is_product_phrase, parse_label, product_key
+from knowledge.facts.resolve import same_value
 
 RATE_ATTRS = {"apy", "apr", "rate", "dividend_rate"}
 DEPOSIT_PAIR = ("dividend_rate", "apy")

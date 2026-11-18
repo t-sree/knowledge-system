@@ -16,7 +16,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from extract import _singular
+from knowledge.text import singular
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:\$[a-z0-9]+)*")       # keeps "home$tart" in one piece
 _LINK = re.compile(r"!\[[^\]]*\]\([^)]*\)")              # images
@@ -44,7 +44,7 @@ def stem(t: str) -> str:
     """Light stemming by prefix: flexibility / flexible -> 'flexib', branches / branch -> 'branch'."""
     if t.isdigit():
         return t
-    t = _singular(t)
+    t = singular(t)
     return t[:STEM_LEN] if len(t) > STEM_LEN else t
 
 
@@ -236,7 +236,7 @@ class PassageIndex:
                         title = v.title.split("|")[0].strip()
                         break
             texts.append(f"{title}\n{c.text}" if title else c.text)
-        from llm import EMBED_BUDGET, EMBED_RETRIES
+        from knowledge.llm.client import EMBED_BUDGET, EMBED_RETRIES
         m = llm.embed(texts, retries=EMBED_RETRIES, budget=EMBED_BUDGET)
         if m is None:
             return                                      # dense search stays off for these chunks

@@ -16,7 +16,8 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from extract import _norm, _singular, is_product_phrase
+from knowledge.ingest.extract import is_product_phrase
+from knowledge.text import normalize, singular
 
 _ABBR_PAREN = re.compile(r"\(([A-Z]{2,6})s?\)")          # find "(HELOC)" first, then look back
 _ABBR_BEFORE = re.compile(r"\b([A-Z]{2,6})s?\s*\(([A-Za-z][^()]{3,60})\)")
@@ -27,7 +28,7 @@ _RATE_ATTRS = {"apy", "apr", "rate", "dividend_rate"}
 
 
 def words(text: str) -> list[str]:
-    return [_singular(w) for w in _norm(text).split()]
+    return [singular(w) for w in normalize(text).split()]
 
 
 def _initials_match(cand: list[str], abbr: str) -> bool:
@@ -144,12 +145,12 @@ class Vocabulary:
         for m in _ABBR_PAREN.finditer(text):
             exp = _expansion(text[max(0, m.start() - 90): m.start()], m.group(1))
             if exp:
-                out.append((m.group(1).lower(), tuple(_singular(w) for w in _norm(" ".join(exp)).split())))
+                out.append((m.group(1).lower(), tuple(singular(w) for w in normalize(" ".join(exp)).split())))
         for m in _ABBR_BEFORE.finditer(text):
             inner = m.group(2)
             toks = [t.lower() for t in re.findall(r"[A-Za-z][\w'’&-]*", inner)]
             if toks and _initials_match(toks, m.group(1).lower()):
-                out.append((m.group(1).lower(), tuple(_singular(w) for w in _norm(inner).split())))
+                out.append((m.group(1).lower(), tuple(singular(w) for w in normalize(inner).split())))
         return out
 
     # ------------------------------------------------------------------ use

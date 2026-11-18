@@ -20,7 +20,7 @@ def main():
     ap.add_argument("--show-fails", action="store_true")
     args = ap.parse_args()
     if args.no_llm:
-        import llm
+        from knowledge.llm import client as llm
         llm.LLM.__init__ = lambda self: [setattr(self, k, v) for k, v in dict(
             enabled=False, client=None, np=None, errors=0, calls=0, last_error="").items()] and None
     from run_eval import load_snapshots
@@ -30,7 +30,7 @@ def main():
     for s in load_snapshots(ROOT / "snapshots"):
         ks.ingest(s)
     all_lat = []
-    for name in ("eval/public_eval.jsonl", "dev/questions.jsonl", "dev/paraphrases.jsonl", "dev/probes.jsonl"):
+    for name in ("eval/public_eval.jsonl", "tools/questions.jsonl", "tools/paraphrases.jsonl", "tools/probes.jsonl"):
         items = [json.loads(l) for l in open(ROOT / name, encoding="utf-8")]
         scores, lat, fails = [], [], []
         for d in items:

@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from store import Block, normalize_url
+from knowledge.ingest.store import Block, normalize_url
 
 _MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july", "august",

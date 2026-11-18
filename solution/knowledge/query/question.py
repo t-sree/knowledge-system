@@ -1,7 +1,7 @@
 """Question Parser (component H), rules only.
 
 Turns a member question into a structured query: intent, attribute, qualifiers, date words, and
-the content words used to match products against the closed vocabulary (vocab.py). Nothing here
+the content words used to match products against the closed vocabulary (query/vocab.py). Nothing here
 is keyed to particular questions: the word lists are general English / banking grammar, and the
 product and variant vocabulary comes from the snapshots.
 """
@@ -12,7 +12,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from extract import _TERM, _norm, _singular, attribute_of, parse_term
+from knowledge.ingest.extract import attribute_of, parse_term
+from knowledge.text import TERM_RE, normalize, singular
 
 # ---------------------------------------------------------------- general word lists
 _STOP = set("""
@@ -56,13 +57,13 @@ _HIGH = re.compile(r"\b(highest|best|top|maximum|max|most)\b", re.I)
 _LOW = re.compile(r"\b(lowest|cheapest|least|smallest)\b", re.I)
 _YESNO = re.compile(r"^\s*(do|does|is|are|can|will|did|has|have)\b", re.I)
 _PAST = re.compile(r"\b(was|were|used to|previously|back in|as of)\b", re.I)
-_CHANGE = re.compile(r"\b(change|changed|changes|increase|increased|decrease|decreased|go up|went up|go down|went down|"
+CHANGE_WORDS = re.compile(r"\b(change|changed|changes|increase|increased|decrease|decreased|go up|went up|go down|went down|"
                      r"raise|raised|lower|lowered|drop|dropped|rise|rose)\b", re.I)
 # Hours: "hours", "what time ...", or opening / closing of lobbies / drive-ups / branches in general.
 _HOURS = re.compile(r"\bhours?\b|\bwhat time\b|\b(?:lobby|lobbies|drive[- ]?(?:up|thru|through)s?)\b[^?]*\b(?:open|close)", re.I)
 _WHERE = re.compile(r"\bwhere is\b|\blocated\b|\bstreet address\b", re.I)
 # Is something still offered / available / open, or has it been discontinued?
-_AVAILABLE = re.compile(r"\bstill\b[^?]*\b(?:offer|offered|available|open|exist|sold|valid|running)|\bno longer\b|"
+AVAILABLE_WORDS = re.compile(r"\bstill\b[^?]*\b(?:offer|offered|available|open|exist|sold|valid|running)|\bno longer\b|"
                         r"\bdiscontinued\b|\bstill (?:have|has|offer)\b", re.I)
 _VEHICLE = re.compile(r"\b(model|vehicle|car|truck|suv|motorcycle|boat|rv|atv)\b", re.I)
 _BUSINESS = re.compile(r"\bbusiness\b", re.I)
@@ -116,7 +117,7 @@ def parse(question: str, vocab) -> Query:
     # qualifiers
     q.term = parse_term(t)
     # every term named ("12 month or 24 month?"), in order
-    for m in _TERM.finditer(t):
+    for m in TERM_RE.finditer(t):
         months = int(m.group(1)) * (12 if m.group(2).lower().startswith("y") else 1)
         if months not in q.terms:
             q.terms.append(months)
@@ -133,8 +134,8 @@ def parse(question: str, vocab) -> Query:
         q.amounts.append(v)
     q.percents = [float(x) for x in _PERCENT.findall(t)]
     q.business = bool(_BUSINESS.search(t))
-    norm = _norm(t)
-    sing = " ".join(_singular(w) for w in norm.split())
+    norm = normalize(t)
+    sing = " ".join(singular(w) for w in norm.split())
     for v in vocab.rate_variants:
         if f" {v} " in f" {norm} " or f" {v} " in f" {sing} ":
             q.variants.add(v)
@@ -142,7 +143,7 @@ def parse(question: str, vocab) -> Query:
         q.variants.add("introductory")
 
     # attribute
-    attr = attribute_of(" ".join(_singular(w) for w in _norm(t).split()))   # "APRs" -> "apr"
+    attr = attribute_of(" ".join(singular(w) for w in normalize(t).split()))   # "APRs" -> "apr"
     if attr is None:
         low = norm.split()
         if "dividend" in low:
@@ -171,25 +172,25 @@ def parse(question: str, vocab) -> Query:
         q.intents.add("yesno")
     if _PAST.search(t):
         q.intents.add("past")
-    if _CHANGE.search(t):
+    if CHANGE_WORDS.search(t):
         q.intents.add("change")
-    if _AVAILABLE.search(t):
+    if AVAILABLE_WORDS.search(t):
         q.intents.add("available")
 
     # content words for product matching (abbreviations expanded with the site's own definitions)
     # words of dates named in the question are not content
     date_words = set()
     for a, b in date_spans:
-        date_words.update(_norm(t[a:b]).split())
+        date_words.update(normalize(t[a:b]).split())
     raw = norm.split()
-    q.tokens = [_singular(w) for w in raw]
+    q.tokens = [singular(w) for w in raw]
     variant_words = {w for v in q.variants for w in v.split()} | ({"intro"} if "introductory" in q.variants else set())
     content = []
     for w in raw:                      # stop words are checked before singularising ("does" != "doe")
         if (w in _STOP or w in _ATTRIBUTE_WORDS or w in _QUALIFIER_WORDS or w in variant_words or w in date_words
                 or w.isdigit() or len(w) < 2 or w == "business"):
             continue
-        sw = _singular(w)
+        sw = singular(w)
         if sw in _STOP or sw in _ATTRIBUTE_WORDS or sw in _QUALIFIER_WORDS:
             continue
         content.append(sw)

@@ -20,8 +20,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from facts import ViewSighting
-from resolve import resolve, same_value
+from knowledge.facts.history import ViewSighting
+from knowledge.facts.resolve import resolve, same_value
 
 HEADLINE_ATTRS = ("apy", "apr", "rate", "fee")
 _RANGE_QUALS = ("balance_tier", "loan_amount", "model_year")
@@ -140,7 +140,7 @@ class ConflictRegister:
     def _usable(vs) -> bool:
         """Rate floors / caps are not the rate. A rate written in a sentence counts only on a promo page
         or when its own sentence names the product (not one borrowed from a heading)."""
-        from passages import tokens
+        from knowledge.answering.passages import tokens
         f = vs.sighting.fact
         if {"floor", "cap"} & set(dict(f.qualifiers).get("variant", ())):
             return False
@@ -261,7 +261,7 @@ class ConflictRegister:
             dated = [(view[p].version.info.content_date or "", p) for p in pages]
             newest, page = max(dated)
             v = view[page].version
-            from passages import tokens
+            from knowledge.answering.passages import tokens
             words = frozenset(t for t in tokens(text_of[bkey]) if not t.isdigit())
             for noun, value in self._counts_in(text_of[bkey]):
                 self.counts.setdefault(noun, []).append(
@@ -270,7 +270,7 @@ class ConflictRegister:
 
     @staticmethod
     def _counts_in(text: str) -> list[tuple[str, str]]:
-        from passages import display_text
+        from knowledge.answering.passages import display_text
         plain = display_text(text)
         out = []
         for m in _COUNT_AFTER.finditer(plain):

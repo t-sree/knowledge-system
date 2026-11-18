@@ -5,25 +5,25 @@ ingest():  page store (A) -> page classifier (B) -> fact extractor (C) -> fact h
            passage index (+ embeddings with a key), conflict register (G).
 answer():  hybrid. The rules path parses the question (H), selects the snapshot view (I) and answers from
            resolved facts (E/F/J/K) or from passage search; when the rules are not confident, gpt-4o-mini
-           reads the question (understand.py) and the answer is still built from the site's own text.
+           reads the question (llm/understand.py) and the answer is still built from the site's own text.
 conflicts(): contradictions found within each snapshot (conflicts.py).
 """
 import copy
 
 from contract import Answer, Snapshot
 
-from answer import RATE_ATTRS, FactAnswerer
-from classify import PageClassifier
-from conflicts import ConflictRegister
-from facts import FactHistory
-from llm import LLM
-from resolve import Resolver
-from store import PageStore
-from passages import PassageAnswerer, PassageIndex
-from question import parse
-from timeline import Timeline
-from understand import Understander
-from vocab import Vocabulary
+from knowledge.answering.facts import RATE_ATTRS, FactAnswerer
+from knowledge.ingest.classify import PageClassifier
+from knowledge.conflicts import ConflictRegister
+from knowledge.facts.history import FactHistory
+from knowledge.llm.client import LLM
+from knowledge.facts.resolve import Resolver
+from knowledge.ingest.store import PageStore
+from knowledge.answering.passages import PassageAnswerer, PassageIndex
+from knowledge.query.question import parse
+from knowledge.facts.timeline import Timeline
+from knowledge.llm.understand import Understander
+from knowledge.query.vocab import Vocabulary
 
 STRONG_MATCH = 0.75     # rules product-match score above which the rules fact answer is used without the LLM
 STRONG_COVERAGE = 0.8   # passage coverage above which the rules passage answer is used without the LLM

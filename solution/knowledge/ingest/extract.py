@@ -24,8 +24,9 @@ from functools import lru_cache
 from typing import Optional
 from urllib.parse import urlsplit
 
-from classify import DateMark
-from store import Block
+from knowledge.ingest.classify import DateMark
+from knowledge.ingest.store import Block
+from knowledge.text import TERM_RE, normalize, singular
 
 # ---------------------------------------------------------------- vocabulary (generic banking terms)
 # Attribute phrases, longest first so "annual percentage rate" wins over "rate".
@@ -73,7 +74,6 @@ _FOOTNOTE = re.compile(r"(%|\bAPR|\bAPY|\))(\d{1,2})(?=\s|$|\||\*|,|\))")
 _TRAILING_FOOTNOTE = re.compile(r"(%|\bAPR|\bAPY)\s+\d$")    # a footnote digit after a space, at the very end
 _MD_NOISE = re.compile(r"\\([*_#|])")
 _NUM = re.compile(r"(?P<cur>\$)?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?P<pct>\s?%)?")
-_TERM = re.compile(r"\b(\d{1,3})\s*[- ]?\s*(month|mo|year|yr)s?\b", re.I)
 _MODEL_YEAR = re.compile(r"\b((?:19|20)\d{2})(?:\s*[-–]\s*(\d{2,4}))?\s*model\s*years?(\s*\(and older\)|\s*and older)?", re.I)
 # Label-first form: "Model Year 2026-23", "Model Years 2019 and older".
 _MODEL_YEAR_FIRST = re.compile(r"\bmodel\s*years?\s*((?:19|20)\d{2})(?:\s*[-–]\s*(\d{2,4}))?(\s*\(and older\)|\s*and older)?", re.I)
@@ -89,7 +89,6 @@ _KV = re.compile(r"^\s*(?:[-*+]\s+)?\**(?P<label>[A-Za-z0-9][^:|\[\]\n]{1,70}?)\
 _PCT_IN_TEXT = re.compile(r"(?<![\w.])(\d{1,2}(?:\.\d{1,3})?)\s?%\s*(APY|APR)?\d?", re.I)
 _CLAUSE_BREAK = re.compile(r"[.!?;:(\n]|—|–\s")
 _LINK = re.compile(r"\]\([^)]*\)|https?://\S+")
-_WORD = re.compile(r"[a-z0-9]+")
 
 INF = float("inf")
 
@@ -121,13 +120,6 @@ def parse_numbers(text: str) -> tuple[tuple[float, str], ...]:
     return tuple(out)
 
 
-@lru_cache(maxsize=65536)
-def _norm(text: str) -> str:
-    """Lower-case words separated by single spaces; apostrophes dropped ("investor's" -> "investors")."""
-    t = (text or "").lower().replace("&", " and ").replace("’", "").replace("'", "")
-    return " ".join(_WORD.findall(t))
-
-
 # Phrases are matched on whole words of normalised text, so plain padded string checks suffice.
 def _has_phrase(norm: str, phrase: str) -> bool:
     return f" {phrase} " in f" {norm} "
@@ -140,18 +132,9 @@ def _remove_phrase(norm: str, phrase: str) -> str:
     return " ".join(padded.split())
 
 
-def _singular(tok: str) -> str:
-    """Simple English singular: lobbies -> lobby, loans -> loan; Illinois, bonus, address stay."""
-    if len(tok) <= 3 or not tok.endswith("s") or tok.endswith(("ss", "is", "us", "ous")):
-        return tok
-    if tok.endswith("ies") and len(tok) > 4:
-        return tok[:-3] + "y"
-    return tok[:-1]
-
-
 def product_key(name: str) -> str:
     """Normalised product identity: lower case, no stop words, simple singulars."""
-    toks = [_singular(t) for t in _norm(name).split() if t not in _STOP]
+    toks = [singular(t) for t in normalize(name).split() if t not in _STOP]
     if len(toks) > 1 and toks[-1] == "account":           # "1st Checking Account" == "1st Checking"
         toks = toks[:-1]
     return " ".join(toks)
@@ -159,7 +142,7 @@ def product_key(name: str) -> str:
 
 @lru_cache(maxsize=65536)
 def attribute_of(text: str) -> Optional[str]:
-    n = _norm(text)
+    n = normalize(text)
     for phrase, attr in _ATTRIBUTE_PHRASES:
         if _has_phrase(n, phrase):
             return attr
@@ -167,19 +150,19 @@ def attribute_of(text: str) -> Optional[str]:
 
 
 def slug(text: str) -> str:
-    return "_".join(_norm(text).split()[:6])
+    return "_".join(normalize(text).split()[:6])
 
 
 @lru_cache(maxsize=65536)
 def is_product_phrase(text: str) -> bool:
-    n = " ".join(_singular(t) for t in _norm(text).split())       # "Auto Loans" names a product too
-    return any(_has_phrase(n, _singular(p)) for p in _PRODUCT_NOUNS)
+    n = " ".join(singular(t) for t in normalize(text).split())       # "Auto Loans" names a product too
+    return any(_has_phrase(n, singular(p)) for p in _PRODUCT_NOUNS)
 
 
 # ---------------------------------------------------------------- qualifiers
 def parse_term(text: str) -> Optional[int]:
     """Term in months: '17 Month' -> 17, '30-Year' -> 360."""
-    m = _TERM.search(text or "")
+    m = TERM_RE.search(text or "")
     if not m:
         return None
     n = int(m.group(1))
@@ -235,12 +218,12 @@ def parse_label(text: str, strip_attribute: bool = True) -> LabelParse:
     term = parse_term(work)
     if term:
         quals["term"] = term
-        work = _TERM.sub(" ", work, count=1)
+        work = TERM_RE.sub(" ", work, count=1)
     amt = parse_money_range(work)
     if amt:
         quals["loan_amount"] = amt
         work = _MONEY_RANGE.sub(" ", _MONEY_UP.sub(" ", _MONEY_DOWN.sub(" ", work)))
-    n = _norm(work)
+    n = normalize(work)
     attr = None
     for phrase, a in _ATTRIBUTE_PHRASES:
         if _has_phrase(n, phrase):
@@ -336,7 +319,7 @@ _ADDRESSED = {"you", "your", "youre", "we", "weve", "our", "us", "my", "i", "let
 
 
 def _is_marketing(text: str) -> bool:
-    return any(w in _ADDRESSED for w in _norm(text).split())
+    return any(w in _ADDRESSED for w in normalize(text).split())
 
 
 @lru_cache(maxsize=65536)
@@ -370,7 +353,7 @@ def _split_row(line: str) -> list[str]:
 
 def _classify_header(h: str) -> tuple[str, Optional[str]]:
     """('attr', name) | ('qual', name) | ('label', None) | ('other', None)."""
-    n = _norm(clean_cell(h))
+    n = normalize(clean_cell(h))
     if not n or re.fullmatch(r"col\d*", n):
         return "other", None
     for phrase, q in _QUALIFIER_HEADERS:

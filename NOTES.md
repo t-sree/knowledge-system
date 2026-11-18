@@ -15,30 +15,31 @@ probe questions 0.933; selftest final 1.0. Public official final 0.871 with the 
 
 `build()` returns a `KnowledgeSystem` (`solution.py`) that defines exactly the three contract methods:
 `ingest(snapshot)`, `answer(question, as_of=None)` and `conflicts()`. Each hands the call to
-`pipeline.Pipeline`; the other files in `solution/` are its parts.
+`knowledge.pipeline.Pipeline`; the `knowledge/` package holds its parts (`ingest/`, `facts/`, `query/`,
+`answering/`, `llm/`, `conflicts.py`, shared helpers in `text.py`).
 
 `ingest(snapshot)` runs, per snapshot:
 
-1. **Page store** (`store.py`): every version of every page; URLs normalised (query variants merged);
+1. **Page store** (`ingest/store.py`): every version of every page; URLs normalised (query variants merged);
    pages split into blocks with their heading path; blocks repeated on 10+ pages flagged as boilerplate.
    A view of snapshot N shows each page's latest version up to N, marked present or carried forward.
-2. **Page classifier** (`classify.py`, rules): page type from URL structure, publish / "rates effective" /
+2. **Page classifier** (`ingest/classify.py`, rules): page type from URL structure, publish / "rates effective" /
    end dates with quotes, "offer has ended" notices.
-3. **Fact extractor** (`extract.py`, rules): rate tables, comparison tables, labelled lines and rates in
+3. **Fact extractor** (`ingest/extract.py`, rules): rate tables, comparison tables, labelled lines and rates in
    prose become facts `product + attribute + qualifiers = value` (term, balance / loan tier, model year,
    variant, business), each with its quote, table effective date and block end date. Every value is
    checked against its quote.
-4. **Fact history** (`facts.py`): every sighting with page, snapshot, page type and dates.
-5. **Vocabulary** (`vocab.py`): product names, section words, page titles and the abbreviations the site
+4. **Fact history** (`facts/history.py`): every sighting with page, snapshot, page type and dates.
+5. **Vocabulary** (`query/vocab.py`): product names, section words, page titles and the abbreviations the site
    defines itself ("certificate (CD)") — learned from the snapshots, no hand-written synonyms.
-6. **Passage index** (`passages.py`): short chunks of every block (a label with its short lines stays one
+6. **Passage index** (`answering/passages.py`): short chunks of every block (a label with its short lines stays one
    chunk), BM25 postings, and — with an OpenAI key — `text-embedding-3-small` vectors.
 
 `answer(question, as_of)` — hybrid:
 
 0. The rules path below runs first. If it is confident (an exact site-wide fact, a rate with a strong
    product match covering every term asked, or a passage covering most of the question with the needed
-   evidence) its answer is returned. Otherwise **gpt-4o-mini** (`understand.py`) reads the question in
+   evidence) its answer is returned. Otherwise **gpt-4o-mini** (`llm/understand.py`) reads the question in
    one compact JSON call: route (rate fact / passage / not on the site), products chosen only from a
    candidate list of real product keys, attribute, terms, model year, amount, variants, intent, and the
    ids of the numbered passage sentences that answer it (short reply = fast call, ~1.2 s). The answer
@@ -49,13 +50,13 @@ probe questions 0.933; selftest final 1.0. Public official final 0.871 with the 
    theirs; a rules refusal with a concrete reason (variant not offered, product discontinued) is final;
    an LLM product pick is rejected if the question names a product word it doesn't carry. Every OpenAI
    call has an enforced deadline (chat 2.5 s); on failure the rules answer stands.
-1. **Parse** (`question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
+1. **Parse** (`query/question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
    available), attribute (incl. hours / address wording), qualifiers (term, amount, model year, variant,
    business), dates named in the question.
 2. **View**: latest snapshot on or before `as_of` (or a date in the question); before the first snapshot
    → refusal.
-3. **Fact path** (`answer.py`): products matched against the vocabulary (with a per-view quality prior),
-   fact keys whose qualifiers fit, each resolved by the **resolver** (`resolve.py`) in a fixed order:
+3. **Fact path** (`answering/facts.py`): products matched against the vocabulary (with a per-view quality prior),
+   fact keys whose qualifiers fit, each resolved by the **resolver** (`facts/resolve.py`) in a fixed order:
    end date passed / offer ended → out; not yet effective → reported as upcoming; source authority per
    attribute class; content date; present over carried forward; newer snapshot; rate sheet first; value
    stated by more pages; extractor. Values compare as numbers. Tier rules: menus list every row, tiered
@@ -63,13 +64,13 @@ probe questions 0.933; selftest final 1.0. Public official final 0.871 with the 
    `conflict_note`, never into the text. A rate question with no matching fact is refused (no numbers);
    if the fact was listed in an earlier snapshot the answer says it isn't listed anymore. "What changed"
    questions are answered from the fact timeline.
-4. **Passage path** (`passages.py`): hybrid BM25 + embedding search inside the view, weighted by page
+4. **Passage path** (`answering/passages.py`): hybrid BM25 + embedding search inside the view, weighted by page
    type, presence and recency; the evidence a question needs must be in the passage (a time for hours, a
    street address, a URL, a year for "when", a count for "how many", every specific name in the
    question). Extractive answer from the best passages; refusal when nothing qualifies.
 5. Answers are cached per (question, as_of).
 
-**Fact timeline** (`timeline.py`) gives each fact's value per snapshot as periods (for "what was it in
+**Fact timeline** (`facts/timeline.py`) gives each fact's value per snapshot as periods (for "what was it in
 May").
 
 **Conflicts** (`conflicts.py`), computed per snapshot at ingest. A contradiction is two pages online at
@@ -98,7 +99,7 @@ from one snapshot to the next is an update and is not listed.
 python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
 ```
 
-Dev tools (not used by the solution): `dev/ask.py` (answers with parse and score per question),
-`dev/questions.jsonl` (our own 47 questions), `dev/paraphrases.jsonl` (our rewordings of the public
-questions), `dev/probes.jsonl` (hard new wordings), `dev/score_all.py` (all sets with latency).
+Dev tools (not used by the solution): `tools/ask.py` (answers with parse and score per question),
+`tools/questions.jsonl` (our own 47 questions), `tools/paraphrases.jsonl` (our rewordings of the public
+questions), `tools/probes.jsonl` (hard new wordings), `tools/score_all.py` (all sets with latency).
 Issues found while testing are logged in `docs/ISSUES.md`.

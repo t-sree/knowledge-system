@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from extract import Fact, FactExtractor
+from knowledge.ingest.extract import Fact, FactExtractor
 
 
 @dataclass(frozen=True)

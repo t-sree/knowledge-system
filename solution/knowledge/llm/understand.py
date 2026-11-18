@@ -16,8 +16,7 @@ import json
 import re
 from typing import Optional
 
-from question import _AVAILABLE as _AVAILABLE_WORDS
-from question import _CHANGE as _CHANGE_WORDS
+from knowledge.query.question import AVAILABLE_WORDS, CHANGE_WORDS
 
 RATE_ATTRS = {"apy", "apr", "rate", "dividend_rate"}
 ATTRIBUTES = ["apy", "apr", "rate", "dividend_rate", "fee", "min_open", "min_earn"]
@@ -32,7 +31,7 @@ N_LEAD = 3                   # lead paragraphs of the top pages added to the pas
 PASSAGE_CHARS = 480          # sentences shown per passage, up to about this many characters
 MAX_SENTENCES = 6
 MAX_OUTPUT_TOKENS = 90
-TIMEOUT = 2.5                # hard deadline per call (llm.py enforces it); measured chat p90 1.7 s, max 2.6 s
+TIMEOUT = 2.5                # hard deadline per call (llm/client.py enforces it); measured chat p90 1.7 s, max 2.6 s
 
 SYSTEM = """You map a credit union member's question to a structured lookup over the credit union's website.
 You get candidate PRODUCTS and PASSAGES (sentences numbered S<passage>.<sentence>). Use only these lists.
@@ -285,10 +284,10 @@ class Understander:
         keep = q.intents & {"past", "change", "available", "url", "high", "low"}
         q.intents = keep | u["intents"]
         # "change" only when the question uses change words ("as of May" alone is a point in time)
-        if "change" in q.intents and not _CHANGE_WORDS.search(q.text):
+        if "change" in q.intents and not CHANGE_WORDS.search(q.text):
             q.intents.discard("change")
         # "available" only when the question asks whether something is still offered
-        if "available" in q.intents and not _AVAILABLE_WORDS.search(q.text):
+        if "available" in q.intents and not AVAILABLE_WORDS.search(q.text):
             q.intents.discard("available")
         # "link" only when the question itself asks for a link / URL / web page
         if "url" in q.intents and not _LINK_WORDS.search(q.text):

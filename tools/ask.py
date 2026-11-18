@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from run_eval import load_snapshots  # noqa: E402
 from scoring import score_item  # noqa: E402
 from solution import build  # noqa: E402
-from question import parse  # noqa: E402
+from knowledge.query.question import parse  # noqa: E402
 
 
 def main() -> None:
