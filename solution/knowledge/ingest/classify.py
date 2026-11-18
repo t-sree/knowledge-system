@@ -106,37 +106,62 @@ class PageInfo:
 
 
 # ---------------- page type from URL structure ----------------
+# Only general web and banking conventions; no section or product names of one particular site.
+# A page the rules don't recognise becomes "info", and an info page with a rate table becomes
+# "product" (see classify()), so unknown layouts still degrade sensibly.
 _DOC_EXT = (".pdf", ".xls", ".xlsx", ".csv", ".doc", ".docx")
-_HUB_PATHS = {"/learn", "/learn/blog", "/newsroom", "/business/resources", "/resources",
-              "/calculators", "/business-calculators"}
-_PRODUCT_PREFIXES = ("/personal", "/business", "/savings", "/checking", "/loans", "/personal-loans",
-                     "/mortgage-refi", "/online-and-mobile-banking", "/connect/", "/shine", "/brighttrack",
-                     "/membership", "/protection/", "/earn-more", "/mobile/")
-_PROMO_WORDS = ("switch-and-earn", "offer", "promo", "challenge", "giveaway", "sweepstakes")
+_DOC_DIRS = {"hubfs", "uploads", "files", "documents", "downloads", "downloadables", "wp-content"}  # CMS file stores
+_NEWS_WORDS = {"news", "newsroom", "press", "press-releases", "media-center"}
+_ARTICLE_WORDS = {"learn", "blog", "blogs", "articles", "resources", "insights", "education", "guides"}
+_LEGAL_WORDS = {"privacy", "disclosure", "disclosures", "terms", "legal"}
+_PROMO_WORDS = ("offer", "promo", "challenge", "giveaway", "sweepstakes", "switch-and-earn")
+# Banking sections and products, matched against the first or last word of a top-level section name
+# ("personal-loans", "online-and-mobile-banking"); a word inside it ("kccc-membership-grant") doesn't count.
+_PRODUCT_WORDS = {"personal", "business", "banking", "membership", "protection", "insurance", "retirement",
+                  "mobile", "savings", "checking", "loan", "loans", "mortgage", "mortgages", "account",
+                  "accounts", "card", "cards", "certificate", "certificates", "investments", "lending"}
+_SECTION_WORDS = _NEWS_WORDS | _ARTICLE_WORDS
+_DATED_PATH = re.compile(r"/(?:19|20)\d{2}/\d{2}/")
+
+
+def _tokens(segment: str) -> list[str]:
+    return [t for t in re.split(r"[-_.]", segment) if t]
 
 
 def type_from_url(url: str) -> str:
     key = normalize_url(url)
     path = key[key.find("/"):] if "/" in key else ""
-    last = path.rsplit("/", 1)[-1]
-    if "/hubfs/" in path or path.endswith(_DOC_EXT):
+    segs = [s for s in path.split("/") if s]
+    last = segs[-1] if segs else ""
+    inner = segs[:-1]                        # the folders above the page itself
+    if path.endswith(_DOC_EXT) or any(s in _DOC_DIRS for s in inner):
         return "document"
-    if path in _HUB_PATHS or re.search(r"/(tag|author|category)/|/page/\d+$", path) or path.startswith("/resources/"):
+    # Listings: tag/author/category/paging pages and section front pages ("/learn/blog", "/newsroom",
+    # "/resources/personal-resources", "/business-calculators").
+    if re.search(r"/(tag|author|category)/|/page/\d+$", path):
         return "listing"
-    if path.startswith("/calculators/"):
+    last_toks = _tokens(last)
+    # A section front page has a short name ("personal-resources"); a story title ending in "insights" doesn't.
+    if last in _SECTION_WORDS or (len(segs) <= 2 and 0 < len(last_toks) <= 3 and last_toks[-1] in _SECTION_WORDS):
+        return "listing"
+    if last and _tokens(last)[-1] == "calculators":
+        return "listing"
+    if any("calculator" in s for s in inner):
         return "calculator"
-    if path.startswith("/newsroom/"):
+    if any(s in _NEWS_WORDS for s in inner):
         return "newsroom"
-    if path.startswith(("/learn/", "/business/resources/", "/dupacodaily/")) or re.match(r"^/\d{4}/\d{2}/", path):
+    if any(s in _ARTICLE_WORDS for s in inner) or _DATED_PATH.search(path):
         return "article"
-    if "privacy" in path or path.startswith("/disclosures") or "/disclosures/" in path:
+    if any(t in _LEGAL_WORDS for s in segs for t in _tokens(s)):
         return "legal"
     if last.endswith("-lp") or any(w in last for w in _PROMO_WORDS):
         return "promo"
-    if any(seg == "rates" or seg.endswith("-rates") for seg in path.split("/")):
+    if any(seg == "rates" or seg.endswith("-rates") for seg in segs):
         return "rate_sheet"
-    if path.startswith(_PRODUCT_PREFIXES):
-        return "product"
+    if segs:
+        toks = _tokens(segs[0])
+        if toks and (toks[0] in _PRODUCT_WORDS or toks[-1] in _PRODUCT_WORDS):
+            return "product"
     return "info"
 
 
