@@ -202,7 +202,10 @@ class Pipeline:
             self.answer_errors += 1
             return FactAnswerer._refusal(q), False
         self._last_meaning_only = self.passage_answerer.last_meaning_only
-        return ans, ans.confident and self.passage_answerer.last_coverage >= STRONG_COVERAGE
+        # Strong: the passage covers the question, or it is hours gathered from several branches' pages
+        # (distinct schedules, which the LLM step, picking passages, would not improve).
+        strong = self.passage_answerer.last_coverage >= STRONG_COVERAGE or self.passage_answerer.last_varied
+        return ans, ans.confident and strong
 
     # ------------------------------------------------------------------ LLM path
     def _llm_answer(self, q, as_of, rules_terms=()):

@@ -424,6 +424,7 @@ class PassageAnswerer:
         self.ks = ks
         self.last_coverage = 0.0
         self.last_meaning_only = False
+        self.last_varied = False
 
     def query_tokens(self, q) -> tuple[list[str], set[str]]:
         """Stemmed query words (site-defined abbreviations expanded) and the words a pattern stands for."""
@@ -452,6 +453,7 @@ class PassageAnswerer:
         idx: PassageIndex = self.ks.passages
         self.last_coverage = 0.0
         self.last_meaning_only = False
+        self.last_varied = False
         query, _ = self.query_tokens(q)
         counting = bool(_HOW_MANY.search(q.text))
         # Evidence a chunk must contain for this kind of question: a time, an address, a phone number,
@@ -478,9 +480,7 @@ class PassageAnswerer:
                              groups=groups)
         if not results:
             return self._refusal()
-        common = {stem(w) for w in STOP | {"branch", "branches", "visa", "credit", "union"}}
-        names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
-
+        names = self._names(q)
         rarest = max(names, key=idx.idf) if names else None
 
         def evident(r):
@@ -523,7 +523,8 @@ class PassageAnswerer:
         self.last_meaning_only = id(good[0]) in meaning_only and good[0][1] < MIN_COVERAGE
         picks = self._picks(q, good, results, names, evident)
         parts = [self._part(r, query) for r in picks]
-        text = "\n\n".join(p for p in parts if p)
+        text = self._join(q, picks, parts)
+        self.last_varied = self._varies(q, parts)     # several branches' schedules: nothing for the LLM to add
         sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
                    for r in picks]
         if past:
@@ -562,8 +563,7 @@ class PassageAnswerer:
         question (the rarest one and at least half), and the pattern the question type needs (a time
         for hours, a street address, a phone number, a URL, a year for "when", a count for "how many")."""
         idx: PassageIndex = self.ks.passages
-        common = {stem(w) for w in STOP | {"branch", "branches", "visa", "credit", "union"}}
-        names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
+        names = self._names(q)
         rarest = max(names, key=idx.idf) if names else None
         evidence = []
         if (q.attribute or "") in EVIDENCE:
@@ -597,14 +597,17 @@ class PassageAnswerer:
         if good_quotes:
             # The quote finds the right passage; the passage's text keeps the facts next to the quote
             # ("…close March 31, 2026" and "…go to Key West and Sycamore Street").
-            parts, used = [], set()
+            parts, used, rows = [], set(), []
             for r, t in good_quotes:
-                if r[2].text in used:
+                if r[2].text in used or self._value_key(q, r) in used:
                     continue
-                used.add(r[2].text)
+                used.update((r[2].text, self._value_key(q, r)))
                 part = self._part(r, query) if _loose(t) in _loose(self._part(r, query)) else r[2].text
-                parts.append(_with_title(part, r[3].version.title))
-            text = "\n\n".join(parts)
+                rows.append(r)
+                parts.append(part)
+            if not self._varies(q, parts):
+                parts = [_with_title(p, r[3].version.title) for r, p in zip(rows, parts)]
+            text = self._join(q, rows, parts)
             if past:
                 text = f"As of {snapshot_date}: " + text
             seen, sources = set(), []
@@ -618,7 +621,7 @@ class PassageAnswerer:
         if not picks:
             return self._refusal()
         parts = [self._part(r, query) for r in picks]
-        text = "\n\n".join(p for p in parts if p)
+        text = self._join(q, picks, parts)
         if past:
             text = f"As of {snapshot_date}: " + text
         sources = [Source(url=r[3].version.url, snapshot_id=r[3].version.snapshot_id, quote=r[2].text[:200])
@@ -642,17 +645,51 @@ class PassageAnswerer:
         comparing = bool(_COMPARE.search(q.text)) or ((q.attribute or "") in EVIDENCE and not names)
         others, used = (2, 0.4) if comparing else (1, 0.75)
         seen_pages = {best[3].version.key}
+        seen_values = {self._value_key(q, best)}
         for r in good[1:]:
             if others <= 0:
                 break
             if r[0] >= used * best[0] and r[2].text not in {p[2].text for p in picks} \
-                    and r[3].version.key not in seen_pages:
+                    and r[3].version.key not in seen_pages and self._value_key(q, r) not in seen_values:
                 picks.append(r)
                 seen_pages.add(r[3].version.key)
+                seen_values.add(self._value_key(q, r))
                 others -= 1
         # same-page chunks in page order
         n_same = 1 + (same is not None)
         return sorted(picks[:n_same], key=lambda r: r[4]) + picks[n_same:]
+
+    @staticmethod
+    def _names(q) -> list[str]:
+        """Name words of the question (capitalised terms), without general words such as "branch"."""
+        common = {stem(w) for w in STOP | {"branch", "branches", "visa", "credit", "union"}}
+        return [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
+
+    @staticmethod
+    def _value_key(q, r):
+        """What a passage tells for this question: for hours / address / phone, the times / addresses /
+        numbers it states ("9 a.m.–5 p.m." and "9 a.m.-5 p.m." are the same schedule); else its text."""
+        pattern = EVIDENCE.get(q.attribute or "")
+        if pattern is None:
+            return _loose(r[2].text)
+        return tuple(_loose(m.group(0)).replace(" ", "") for m in pattern.finditer(display_text(r[2].text)))
+
+    def _varies(self, q, parts) -> bool:
+        """Hours asked without naming a branch, answered with several branches' schedules."""
+        return q.attribute == "hours" and len([p for p in parts if p]) >= 2 and not self._names(q)
+
+    def _join(self, q, picks, parts) -> str:
+        """The picked passages as one answer. Hours asked without naming a branch come from several
+        branches' pages: the answer says they vary, names each schedule's page and asks to confirm."""
+        parts = [p for p in parts if p]
+        if not self._varies(q, parts):
+            return "\n\n".join(parts)
+        labelled = []
+        for r, part in zip(picks, parts):
+            head = " ".join(re.sub(r"\b(?:19|20)\d{2}\b", " ", (r[3].version.title or "").split("|")[0]).split())
+            labelled.append(f"{head}:\n{part}" if head and len(head) <= 100 else part)
+        return (f"Hours vary by branch; {SITE.name}'s website lists these schedules:\n\n" + "\n\n".join(labelled)
+                + "\n\nPlease check with your branch to confirm its current hours.")
 
     def _part(self, r, query) -> str:
         """Text of one picked chunk: best sentences, plus the short lines after a short line and the
