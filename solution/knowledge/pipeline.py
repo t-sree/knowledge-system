@@ -24,6 +24,7 @@ from knowledge.query.question import parse
 from knowledge.facts.timeline import Timeline
 from knowledge.llm.understand import Understander
 from knowledge.query.vocab import Vocabulary
+from knowledge.site import SITE
 
 STRONG_MATCH = 0.75     # rules product-match score above which the rules fact answer is used without the LLM
 STRONG_COVERAGE = 0.8   # passage coverage above which the rules passage answer is used without the LLM
@@ -57,6 +58,8 @@ class Pipeline:
 
     def ingest(self, snapshot: Snapshot) -> None:
         rec = self.store.add_snapshot(snapshot)
+        # The organisation's name, from the first snapshot's URLs and titles, before anything is indexed.
+        SITE.learn(self.store.versions[k][-1] for k in sorted(rec.members))
         for key in sorted(rec.members):
             try:
                 self.classifier.classify_version(self.store.versions[key][-1])
@@ -148,7 +151,7 @@ class Pipeline:
         return ref, self._select_view(ref)
 
     def _too_early(self):
-        return Answer(text="I don't have information from that early; Dupaco's website records here start "
+        return Answer(text=f"I don't have information from that early; {SITE.name}'s website records here start "
                            "later than that date, so I can't confirm what applied then.", confident=False)
 
     def _rules_answer(self, q, as_of):

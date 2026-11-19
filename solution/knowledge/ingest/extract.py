@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 
 from knowledge.ingest.classify import DateMark
 from knowledge.ingest.store import Block
+from knowledge.site import register_stopwords
 from knowledge.text import TERM_RE, normalize, singular
 
 # ---------------------------------------------------------------- vocabulary (generic banking terms)
@@ -66,7 +67,7 @@ _PRODUCT_NOUNS = ("certificate", "cd", "savings", "saving", "checking", "loan", 
                   "money market", "ira", "heloc", "hsa", "account", "club", "line of credit", "equity",
                   "share", "mastercard", "credit")
 
-_STOP = {"the", "a", "an", "of", "for", "to", "our", "your", "dupaco", "with", "on", "in", "at", "is", "as",
+_STOP = {"the", "a", "an", "of", "for", "to", "our", "your", "with", "on", "in", "at", "is", "as",
          "low", "as low as", "and", "&"}
 
 # ---------------------------------------------------------------- value patterns
@@ -709,3 +710,7 @@ class FactExtractor:
             self._cache[ck] = hit
             self.rejected += hit[1]
         return hit[0]
+
+
+# The site's own name is a stop word in product names (site.py); cached parses must then be redone.
+register_stopwords(_STOP, cached=(parse_label, context_product))

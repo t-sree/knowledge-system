@@ -23,6 +23,7 @@ from contract import Answer, Source
 
 from knowledge.ingest.extract import is_product_phrase, parse_label, product_key
 from knowledge.facts.resolve import same_value
+from knowledge.site import SITE
 
 RATE_ATTRS = {"apy", "apr", "rate", "dividend_rate"}
 DEPOSIT_PAIR = ("dividend_rate", "apy")
@@ -279,8 +280,8 @@ class FactAnswerer:
     @staticmethod
     def _discontinued(q, rec) -> Answer:
         month = date.fromisoformat(rec.taken_on).strftime("%B")
-        return Answer(text=(f"That isn't listed on Dupaco's website anymore: it no longer appears on the rate pages "
-                            f"(it was last listed in {month}). Please contact Dupaco for current options."),
+        return Answer(text=(f"That isn't listed on {SITE.name}'s website anymore: it no longer appears on the rate pages "
+                            f"(it was last listed in {month}). Please contact {SITE.name} for current options."),
                       sources=[], confident=False)
 
     def _compose_available(self, q, rows, past, snapshot_date) -> Answer:
@@ -564,7 +565,7 @@ class FactAnswerer:
         prefix = f"As of {_fmt_date(snapshot_date)}, " if past else ""
         num = r.fact.numbers[0][0] if r.fact.numbers else None
         value = f"{int(num)}" if num is not None and r.fact.attribute == "routing_number" else r.value
-        text = f"{prefix}Dupaco's {label} is {value}." if prefix == "" else f"{prefix}Dupaco's {label} was {value}."
+        text = f"{prefix}{SITE.name}'s {label} is {value}." if prefix == "" else f"{prefix}{SITE.name}'s {label} was {value}."
         rows = [("", (), {r.fact.attribute: r})]
         # the same value stated under other keys (e.g. on business pages) are sources too
         rows += [("", (), {o.fact.attribute: o}) for o in results[1:] if same_value(o.fact, r.fact)]
@@ -591,6 +592,6 @@ class FactAnswerer:
     @staticmethod
     def _refusal(q) -> Answer:
         return Answer(
-            text=("I couldn't find a published rate for that on Dupaco's website, so I can't confirm one. "
-                  "Please contact Dupaco directly for a current quote."),
+            text=(f"I couldn't find a published rate for that on {SITE.name}'s website, so I can't confirm one. "
+                  f"Please contact {SITE.name} directly for a current quote."),
             sources=[], confident=False)

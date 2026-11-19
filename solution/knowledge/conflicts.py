@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from knowledge.facts.history import ViewSighting
 from knowledge.facts.resolve import resolve, same_value
+from knowledge.site import SITE
 
 HEADLINE_ATTRS = ("apy", "apr", "rate", "fee")
 _RANGE_QUALS = ("balance_tier", "loan_amount", "model_year")
@@ -332,7 +333,7 @@ class ConflictRegister:
             values = [s["value"] for s in ranked][:MAX_VALUES]
             srcs = [Source(url=s["url"], snapshot_id=s["sid"]) for s in ranked][:MAX_VALUES]
             older = ", ".join(f"{s['value']} ({s['date'] or 'undated'})" for s in ranked[1:4])
-            out.append(Conflict(topic=f"Dupaco {noun}", values=values, sources=srcs, resolution=win["value"],
+            out.append(Conflict(topic=f"{SITE.name} {noun}", values=values, sources=srcs, resolution=win["value"],
                                 reason=f"the newest page with this standard paragraph ({win['date'] or 'undated'}, "
                                        f"{win['url']}) says {win['value']}; older pages still say {older}"))
         return out

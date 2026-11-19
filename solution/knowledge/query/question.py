@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from knowledge.ingest.extract import attribute_of, parse_term
+from knowledge.site import register_stopwords
 from knowledge.text import TERM_RE, normalize, singular
 
 # ---------------------------------------------------------------- general word lists
@@ -21,7 +22,7 @@ a an the of for to on in at by with from and or but is are was were be been bein
 would should will shall may might must i me my we our us you your it its this that these those there here
 what which who whom whose when where why how much many any some all every each
 please tell give show get find know need want like let about tell say repeat again also just
-dupaco dupacos credit union cu currently current now today right offer offered offering have has had
+credit union cu currently current now today right offer offered offering have has had
 available option options type types kind kinds still yet as than then so if not no yes between among
 their them they his her he she him its im ive id youre whats whats wheres hows thats theres
 use using used see seeing look looking provide find check tell know get got getting go going want wanted
@@ -29,6 +30,7 @@ borrow borrowing borrowed take taking put putting open opening save saved how
 would like love need needs help could please thanks thank also just only really very more most less
 account accounts product products service services information info detail details
 """.split())
+register_stopwords(_STOP)                # the site's own name (site.py)
 _ATTRIBUTE_WORDS = set("""
 rate rates interest apy apr yield yields annual percentage dividend dividends fee fees cost costs charge
 charges price pay pays paying earn earns earning return minimum min maximum max number routing phone

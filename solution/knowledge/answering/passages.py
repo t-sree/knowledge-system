@@ -16,6 +16,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from knowledge.site import SITE, register_stopwords
 from knowledge.text import singular
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:\$[a-z0-9]+)*")       # keeps "home$tart" in one piece
@@ -32,7 +33,7 @@ STOP = set("""
 a an the of for to on in at by with from and or but is are was were be been being do does did can could
 would should will shall may might must i me my we our us you your it its this that these those there here
 what which who whom whose when where why how much many any some all every each please tell give show
-get know need want like let about say repeat again also just dupaco dupacos credit union cu as than then
+get know need want like let about say repeat again also just credit union cu as than then
 so if not no yes their them they im ive whats wheres hows thats theres use see look find have has had
 going go new
 """.split())
@@ -53,10 +54,11 @@ def tokens(text: str) -> list[str]:
 
 
 STOP = {stem(w) for w in STOP}
+register_stopwords(STOP, stem)          # the site's own name (site.py)
 
 
 def display_text(text: str) -> str:
-    """Markdown block as plain text; links keep their URL ("Join (https://join.dupaco.com/...)")."""
+    """Markdown block as plain text; links keep their URL ("Join (https://join.example.com/...)")."""
     t = _LINK.sub(" ", text or "")
 
     def link(m):
@@ -476,7 +478,7 @@ class PassageAnswerer:
                              groups=groups)
         if not results:
             return self._refusal()
-        common = {stem(w) for w in STOP | {"dupaco", "branch", "branches", "visa", "credit", "union"}}
+        common = {stem(w) for w in STOP | {"branch", "branches", "visa", "credit", "union"}}
         names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
 
         rarest = max(names, key=idx.idf) if names else None
@@ -560,7 +562,7 @@ class PassageAnswerer:
         question (the rarest one and at least half), and the pattern the question type needs (a time
         for hours, a street address, a phone number, a URL, a year for "when", a count for "how many")."""
         idx: PassageIndex = self.ks.passages
-        common = {stem(w) for w in STOP | {"dupaco", "branch", "branches", "visa", "credit", "union"}}
+        common = {stem(w) for w in STOP | {"branch", "branches", "visa", "credit", "union"}}
         names = [t for n in named_terms(q.text, common) for t in tokens(n) if t not in common]
         rarest = max(names, key=idx.idf) if names else None
         evidence = []
@@ -691,5 +693,5 @@ class PassageAnswerer:
     @staticmethod
     def _refusal():
         from contract import Answer
-        return Answer(text="I couldn't find that on Dupaco's website, so I can't confirm it. "
-                           "Please contact Dupaco directly.", confident=False)
+        return Answer(text=f"I couldn't find that on {SITE.name}'s website, so I can't confirm it. "
+                           f"Please contact {SITE.name} directly.", confident=False)
