@@ -9,13 +9,15 @@ answer():  hybrid. The rules path parses the question (H), selects the snapshot 
            built from the site's own text.
 conflicts(): contradictions found within each snapshot (conflicts.py).
 """
+import calendar
 import copy
+import re
 
 from contract import Answer, Snapshot
 
 from knowledge.answering.counts import CountAnswerer
 from knowledge.answering.facts import RATE_ATTRS, FactAnswerer
-from knowledge.ingest.classify import PageClassifier
+from knowledge.ingest.classify import PageClassifier, parse_date
 from knowledge.conflicts import ConflictRegister
 from knowledge.facts.history import FactHistory
 from knowledge.llm.client import LLM
@@ -28,6 +30,26 @@ from knowledge.facts.timeline import Timeline
 from knowledge.llm.understand import Understander
 from knowledge.query.vocab import Vocabulary
 from knowledge.site import SITE
+
+def as_of_date(as_of):
+    """`as_of` as an ISO date (yyyy-mm-dd), or None for the latest snapshot. Accepts date / datetime
+    objects, "2026-05-31T10:00:00Z", "2026-05" (end of that month), "2026" (end of that year) and written
+    dates ("May 31, 2026", "05/31/2026"); anything unreadable means the latest snapshot."""
+    if not as_of:
+        return None
+    if hasattr(as_of, "isoformat"):
+        return as_of.isoformat()[:10]
+    s = str(as_of).strip()
+    m = re.match(r"^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?(?:[T ].*)?$", s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2) or 12), m.group(3)
+        if 1 <= mo <= 12:
+            day = int(d) if d else calendar.monthrange(y, mo)[1]
+            if 1 <= day <= calendar.monthrange(y, mo)[1]:
+                return f"{y:04d}-{mo:02d}-{day:02d}"
+        return None
+    return parse_date(s)
+
 
 STRONG_MATCH = 0.75     # rules product-match score above which the rules fact answer is used without the LLM
 STRONG_COVERAGE = 0.8   # passage coverage above which the rules passage answer is used without the LLM
@@ -118,6 +140,7 @@ class Pipeline:
         return idx
 
     def answer(self, question, as_of=None):
+        as_of = as_of_date(as_of)
         ck = (" ".join((question or "").lower().split()), as_of, len(self.store.snapshots))
         hit = self._cache.get(ck)
         if hit is not None:

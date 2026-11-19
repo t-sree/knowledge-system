@@ -18,3 +18,6 @@
 {"id": "pr-018", "category": "conflict_resolution", "question": "How many employees work at Dupaco?", "must_include": ["600"], "must_not_include": ["700", "650"]}
 {"id": "pr-019", "category": "conflict_resolution", "question": "What's the number of branch office locations Dupaco has?", "must_include": ["22"], "must_not_include": ["23 branch"]}
 {"id": "pr-020", "category": "current_value", "question": "How many employees received a Hoefer scholarship?", "must_include": ["Hoefer"], "must_not_include": ["600 employees"]}
+{"id": "pr-021", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "2026-05", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
+{"id": "pr-022", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "May 31, 2026", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
+{"id": "pr-023", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "2026-05-31T12:00:00Z", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
