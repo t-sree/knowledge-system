@@ -31,6 +31,8 @@ _COUNT_BEFORE = re.compile(
     r"(?:more than|over|nearly|about|approximately|almost)?\s*(\$?\d[\d,.]*\s*(?:billion|million)?)", re.I)
 _SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"“(])|\n+")
 _NUM = re.compile(r"\$?\d[\d,]*(?:\.\d+)?")
+# "the fifth time", "the eighth consecutive year": ordinal statements, one per release, newest wins.
+_ORDINAL = re.compile(r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|\d{1,2}(?:st|nd|rd|th))\s+(?:(?:straight|consecutive)\s+)?(time|year)s?\b", re.I)
 
 
 def counts_in(text: str) -> list[tuple[str, str]]:
@@ -73,6 +75,8 @@ class StatementIndex:
         self.store = store
         self._by_version: dict[tuple[str, int], list[Statement]] = {}
         self.by_view: dict[int, list[Statement]] = {}       # standard statements on present pages
+        self._ordinals_by_version: dict[tuple[str, int], list[Statement]] = {}
+        self.ordinals_by_view: dict[int, list[Statement]] = {}  # "<ordinal> time / year" sentences
 
     def _version_statements(self, version) -> list[Statement]:
         ck = (version.key, version.snapshot_index)
@@ -101,18 +105,41 @@ class StatementIndex:
         self._by_version[ck] = out
         return out
 
+    def _version_ordinals(self, version) -> list[Statement]:
+        """Ordinal sentences of a page; noun = "time" / "year", value = the ordinal. Their words include
+        the page title's, which names the subject ("Forbes ranks Dupaco as a top credit union")."""
+        ck = (version.key, version.snapshot_index)
+        hit = self._ordinals_by_version.get(ck)
+        if hit is None:
+            from knowledge.answering.passages import display_text, tokens
+            date = (version.info.content_date if version.info else None) or ""
+            title = frozenset(tokens((version.title or "").split("|")[0]))
+            hit = []
+            for b in version.blocks:
+                for sent in _SENT.split(display_text(b.text)):
+                    sent = " ".join(sent.split())
+                    for m in _ORDINAL.finditer(sent):
+                        hit.append(Statement(m.group(2).lower(), m.group(1).lower(), sent, masked(sent),
+                                             frozenset(tokens(sent)) | title, date, version.url,
+                                             version.snapshot_id, version.key))
+            self._ordinals_by_version[ck] = hit
+        return hit
+
     def add_view(self, index: int) -> None:
-        """Collect the standard statements on the present pages of snapshot view `index`."""
+        """Collect the standard statements and ordinal sentences on the present pages of view `index`."""
         pages_of: dict[str, set] = defaultdict(set)
-        stmts = []
+        stmts, ordinals = [], []
         for pk, e in sorted(self.store.view(index).items()):
             info = e.version.info
+            if e.present and info is not None and info.page_type != "listing":
+                ordinals.extend(self._version_ordinals(e.version))
             if not e.present or info is None or info.page_type not in STATEMENT_PAGE_TYPES:
                 continue
             for s in self._version_statements(e.version):
                 pages_of[s.wording].add(pk)
                 stmts.append(s)
         self.by_view[index] = [s for s in stmts if len(pages_of[s.wording]) >= REPEATED_MIN_PAGES]
+        self.ordinals_by_view[index] = ordinals
 
     @staticmethod
     def family(stmts: list[Statement], noun: str) -> list[Statement]:

@@ -51,7 +51,7 @@ def as_of_date(as_of):
     return parse_date(s)
 
 
-STRONG_MATCH = 0.75     # rules product-match score above which the rules fact answer is used without the LLM
+STRONG_MATCH = 0.75    # rules product-match score above which the rules fact answer is used without the LLM
 STRONG_COVERAGE = 0.8   # passage coverage above which the rules passage answer is used without the LLM
 
 
@@ -209,16 +209,17 @@ class Pipeline:
             # A refusal with a concrete reason (asked variant not offered, product discontinued) is final.
             strong = strong or self.fact_answerer.last_refusal in ("missing_variant", "discontinued")
             return ans, strong
-        if q.attribute in RATE_ATTRS:
-            # Rates are only ever answered from extracted facts; no matching fact = not published.
-            return FactAnswerer._refusal(q), False
         try:
             ans = self.count_answerer.answer(q, index, ref_date, past, rec.taken_on)
         except Exception:
             self.answer_errors += 1
             ans = None
         if ans is not None:
-            return ans, True                     # "how many": the newest standard statement (facts/statements.py)
+            # "how many" (never a rate, even with "dividend" in it): the newest standard / ordinal statement
+            return ans, True
+        if q.attribute in RATE_ATTRS:
+            # Rates are only ever answered from extracted facts; no matching fact = not published.
+            return FactAnswerer._refusal(q), False
         try:
             ans = self.passage_answerer.answer(q, index, past, rec.taken_on)
         except Exception:

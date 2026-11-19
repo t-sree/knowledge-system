@@ -21,3 +21,5 @@
 {"id": "pr-021", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "2026-05", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
 {"id": "pr-022", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "May 31, 2026", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
 {"id": "pr-023", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "2026-05-31T12:00:00Z", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
+{"id": "pr-024", "category": "stale_trap", "question": "How many years in a row has Dupaco paid a participation dividend?", "must_include": ["eighth"], "must_not_include": ["seventh", "sixth"]}
+{"id": "pr-025", "category": "stale_trap", "question": "How many times has Forbes recognized Dupaco?", "must_include": ["fifth"], "must_not_include": ["fourth"]}
