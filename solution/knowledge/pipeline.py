@@ -2,22 +2,25 @@
 methods and hands each call to this class).
 
 ingest():  page store (A) -> page classifier (B) -> fact extractor (C) -> fact history (D) -> vocabulary,
-           passage index (+ embeddings with a key), conflict register (G).
+           passage index (+ embeddings with a key), standard statements, conflict register (G).
 answer():  hybrid. The rules path parses the question (H), selects the snapshot view (I) and answers from
-           resolved facts (E/F/J/K) or from passage search; when the rules are not confident, gpt-4o-mini
-           reads the question (llm/understand.py) and the answer is still built from the site's own text.
+           resolved facts (E/F/J/K), standard statements ("how many") or passage search; when the rules
+           are not confident, gpt-4o-mini reads the question (llm/understand.py) and the answer is still
+           built from the site's own text.
 conflicts(): contradictions found within each snapshot (conflicts.py).
 """
 import copy
 
 from contract import Answer, Snapshot
 
+from knowledge.answering.counts import CountAnswerer
 from knowledge.answering.facts import RATE_ATTRS, FactAnswerer
 from knowledge.ingest.classify import PageClassifier
 from knowledge.conflicts import ConflictRegister
 from knowledge.facts.history import FactHistory
 from knowledge.llm.client import LLM
 from knowledge.facts.resolve import Resolver
+from knowledge.facts.statements import StatementIndex
 from knowledge.ingest.store import PageStore
 from knowledge.answering.passages import PassageAnswerer, PassageIndex
 from knowledge.query.question import parse
@@ -43,7 +46,9 @@ class Pipeline:
         self.vocab = Vocabulary(self.facts)
         self.fact_answerer = FactAnswerer(self)
         self.passages = PassageIndex(self.store)
+        self.statements = StatementIndex(self.store)
         self.passage_answerer = PassageAnswerer(self)
+        self.count_answerer = CountAnswerer(self)
         # OpenAI is optional: checked once here; without a key everything runs on rules.
         self.llm = LLM()
         self.register = ConflictRegister(self)
@@ -76,6 +81,10 @@ class Pipeline:
             pass
         try:
             self.passages.embed_pending(self.llm)
+        except Exception:
+            self.passage_errors += 1
+        try:
+            self.statements.add_view(rec.index)  # standard sentences with counts
         except Exception:
             self.passage_errors += 1
         self.register.add_view(rec.index)       # contradictions within this snapshot (G)
@@ -180,6 +189,13 @@ class Pipeline:
         if q.attribute in RATE_ATTRS:
             # Rates are only ever answered from extracted facts; no matching fact = not published.
             return FactAnswerer._refusal(q), False
+        try:
+            ans = self.count_answerer.answer(q, index, ref_date, past, rec.taken_on)
+        except Exception:
+            self.answer_errors += 1
+            ans = None
+        if ans is not None:
+            return ans, True                     # "how many": the newest standard statement (facts/statements.py)
         try:
             ans = self.passage_answerer.answer(q, index, past, rec.taken_on)
         except Exception:

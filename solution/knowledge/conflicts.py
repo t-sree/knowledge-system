@@ -11,12 +11,12 @@ G1  rates and fees: sightings of the same fact on different present pages of one
     answer() always agree. An offer page that says it has ended still counts as a contradiction.
 G2  conflicts are reported per topic (product + attribute + term + variants); tiers fold into one
     entry and the same topic seen in several snapshots is one entry.
-G3  counts in standard paragraphs repeated across many pages ("It has over 600 employees and 23 branch
-    office locations"): different numbers on present pages are a contradiction; the newest page wins.
+G3  counts in standard sentences repeated across many pages ("It has over 600 employees and 22 branch
+    office locations", facts/statements.py): different numbers on present pages are a contradiction;
+    the newest dated page wins.
 """
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -30,18 +30,8 @@ _ATTR_LABEL = {"apy": "APY", "apr": "APR", "rate": "interest rate", "fee": "fee"
 _LOW_AUTHORITY = {"article", "newsroom"}
 MAX_VALUES = 8
 
-# G3: counts in repeated standard paragraphs
-REPEATED_MIN_PAGES = 3
-_COUNT_PAGE_TYPES = {"newsroom", "info"}           # press-release boilerplate and about pages
-_PHRASE_STOP = {"with", "and", "of", "in", "the", "by", "for", "to", "from", "at", "on", "a", "an", "as"}
-_YEARISH = re.compile(r"^(?:19|20)\d{2}$")
-_UNIT_WORDS = {"days", "weeks", "months", "years", "hours", "minutes", "seconds", "miles", "percent", "points"}
 _AUTH_RANK = {"rate_sheet": 0, "product": 0, "info": 1, "promo": 2, "calculator": 3, "newsroom": 4,
               "article": 5, "document": 6, "legal": 7}
-_COUNT_AFTER = re.compile(r"(?<![\d$.,])(\d{1,3}(?:,\d{3})+|\d+)\s+((?:[A-Za-z-]+\s+){0,2}[A-Za-z-]+s)\b")
-_COUNT_BEFORE = re.compile(
-    r"\b([A-Za-z]+)\s+(?:has grown to|totals|totaling|exceeding|exceeds|reached)\s+"
-    r"(?:more than|over|nearly|about|approximately|almost)?\s*(\$?\d[\d,.]*\s*(?:billion|million)?)", re.I)
 
 
 @dataclass
@@ -77,7 +67,6 @@ class ConflictRegister:
     def __init__(self, ks) -> None:
         self.ks = ks
         self.topics: dict[tuple, _Topic] = {}
-        self.counts: dict[str, dict] = {}         # noun -> {value text -> (newest date, sighting info)}
         self._done_views: set[int] = set()
         self.errors = 0
 
@@ -88,10 +77,6 @@ class ConflictRegister:
         self._done_views.add(index)
         try:
             self._rate_conflicts(index)
-        except Exception:
-            self.errors += 1
-        try:
-            self._count_statements(index)
         except Exception:
             self.errors += 1
 
@@ -242,62 +227,6 @@ class ConflictRegister:
         t.pairs.append(_Pair(winner, loser, reason, index))
         t.latest_view = max(t.latest_view, index)
 
-    # ------------------------------------------------------------------ G3
-    def _count_statements(self, index: int) -> None:
-        """Counts in standard paragraphs (repeated on several press-release / info pages)."""
-        view = self.ks.store.view(index)
-        pages_of: dict[str, set] = defaultdict(set)
-        text_of: dict[str, str] = {}
-        for pk, e in view.items():
-            info = e.version.info
-            if not e.present or info is None or info.page_type not in _COUNT_PAGE_TYPES:
-                continue
-            for b in e.version.blocks:
-                if any(ch.isdigit() for ch in b.text):
-                    pages_of[b.key].add(pk)
-                    text_of.setdefault(b.key, b.text)
-        for bkey, pages in pages_of.items():
-            if len(pages) < REPEATED_MIN_PAGES:
-                continue
-            dated = [(view[p].version.info.content_date or "", p) for p in pages]
-            newest, page = max(dated)
-            v = view[page].version
-            from knowledge.answering.passages import tokens
-            words = frozenset(t for t in tokens(text_of[bkey]) if not t.isdigit())
-            for noun, value in self._counts_in(text_of[bkey]):
-                self.counts.setdefault(noun, []).append(
-                    {"value": value, "words": words, "date": newest, "url": v.url, "sid": v.snapshot_id,
-                     "pages": len(pages), "view": index})
-
-    @staticmethod
-    def _counts_in(text: str) -> list[tuple[str, str]]:
-        from knowledge.answering.passages import display_text
-        plain = display_text(text)
-        out = []
-        for m in _COUNT_AFTER.finditer(plain):
-            noun = " ".join(m.group(2).lower().split())
-            if noun.split()[0] in _PHRASE_STOP or noun.split()[-1] in _UNIT_WORDS:
-                continue
-            if _YEARISH.match(m.group(1)):
-                continue
-            out.append((noun, m.group(1)))
-        for m in _COUNT_BEFORE.finditer(plain):
-            if m.group(1).lower() in _PHRASE_STOP:
-                continue
-            out.append((m.group(1).lower(), " ".join(m.group(2).split())))
-        return out
-
-    def _count_family(self, noun: str) -> list[dict]:
-        """Statements of one standard paragraph across its versions (similar wording, numbers differ).
-        The largest such family is used; unrelated paragraphs that happen to share the noun are ignored."""
-        stmts = self.counts.get(noun, [])
-        best = []
-        for s in stmts:
-            fam = [o for o in stmts if len(s["words"] & o["words"]) / max(1, len(s["words"] | o["words"])) >= 0.5]
-            if len(fam) > len(best):
-                best = fam
-        return best
-
     # ================================================================== output
     def conflicts(self) -> list:
         from contract import Conflict, Source
@@ -325,24 +254,32 @@ class ConflictRegister:
             out.append(Conflict(topic=t.title, values=values, sources=srcs[:MAX_VALUES],
                                 resolution="; ".join(w.sighting.fact.value for w in winners[:4]),
                                 reason=reason))
-        for noun in sorted(self.counts):
-            ranked = self._ranked_values(noun)
-            if len(ranked) < 2:
-                continue
-            win = ranked[0]
-            values = [s["value"] for s in ranked][:MAX_VALUES]
-            srcs = [Source(url=s["url"], snapshot_id=s["sid"]) for s in ranked][:MAX_VALUES]
-            older = ", ".join(f"{s['value']} ({s['date'] or 'undated'})" for s in ranked[1:4])
-            out.append(Conflict(topic=f"{SITE.name} {noun}", values=values, sources=srcs, resolution=win["value"],
-                                reason=f"the newest page with this standard paragraph ({win['date'] or 'undated'}, "
-                                       f"{win['url']}) says {win['value']}; older pages still say {older}"))
+        out.extend(self._statement_conflicts())
         return out
 
-    def _ranked_values(self, noun: str) -> list[dict]:
-        """One statement per distinct value of the paragraph family, newest first."""
-        best: dict[str, dict] = {}
-        for s in self._count_family(noun):
-            prev = best.get(s["value"])
-            if prev is None or (s["date"], s["pages"]) > (prev["date"], prev["pages"]):
-                best[s["value"]] = s
-        return sorted(best.values(), key=lambda s: (s["date"], s["pages"]), reverse=True)
+    # ------------------------------------------------------------------ G3
+    def _statement_conflicts(self) -> list:
+        """Standard statements (facts/statements.py) whose pages disagree: per counted noun, the newest
+        snapshot in which present pages state different values; the newest dated statement wins."""
+        from contract import Conflict, Source
+        S = self.ks.statements
+        out, done = [], set()
+        for index in sorted(S.by_view, reverse=True):
+            stmts = S.by_view[index]
+            for noun in S.nouns(index):
+                if noun in done:
+                    continue
+                ranked = S.ranked_values(S.family(stmts, noun))
+                if len(ranked) < 2:
+                    continue
+                done.add(noun)
+                win = ranked[0]
+                values = [s.value for s in ranked][:MAX_VALUES]
+                srcs = [Source(url=s.url, snapshot_id=s.snapshot_id, quote=s.sentence[:200])
+                        for s in ranked][:MAX_VALUES]
+                older = ", ".join(f"{s.value} ({s.date or 'undated'})" for s in ranked[1:4])
+                out.append((noun, Conflict(
+                    topic=f"{SITE.name} {noun}", values=values, sources=srcs, resolution=win.value,
+                    reason=f"the newest page with this standard sentence ({win.date or 'undated'}, {win.url}) "
+                           f"says {win.value}; older pages still say {older}")))
+        return [c for _, c in sorted(out, key=lambda nc: nc[0])]

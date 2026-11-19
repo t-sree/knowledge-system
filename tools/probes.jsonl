@@ -13,3 +13,8 @@
 {"id": "pr-013", "category": "stale_trap", "question": "I'm buying a 2025 car and want a 60 month loan. What APR would I get?", "must_include": ["5.39%"], "must_not_include": ["5.34%"]}
 {"id": "pr-014", "category": "list_completeness", "question": "Which credit cards do you have?", "must_include": ["Platinum Visa", "Rewards Visa"]}
 {"id": "pr-015", "category": "should_refuse", "question": "What interest rate do you charge on a construction loan?"}
+{"id": "pr-016", "category": "conflict_resolution", "question": "How many members does Dupaco have?", "must_include": ["179,000"], "must_not_include": ["178,000"]}
+{"id": "pr-017", "category": "conflict_resolution", "question": "How many counties does Dupaco serve?", "must_include": ["118"], "must_not_include": ["112"]}
+{"id": "pr-018", "category": "conflict_resolution", "question": "How many employees work at Dupaco?", "must_include": ["600"], "must_not_include": ["700", "650"]}
+{"id": "pr-019", "category": "conflict_resolution", "question": "What's the number of branch office locations Dupaco has?", "must_include": ["22"], "must_not_include": ["23 branch"]}
+{"id": "pr-020", "category": "current_value", "question": "How many employees received a Hoefer scholarship?", "must_include": ["Hoefer"], "must_not_include": ["600 employees"]}
