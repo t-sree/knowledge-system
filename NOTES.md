@@ -2,104 +2,89 @@
 
 ## Status
 
-Hybrid: rules answer every question first (rate / fee questions from extracted facts, everything else
-from passage search over the selected snapshot); confident rules answers are returned as is, the rest
-are read by gpt-4o-mini. `conflicts()` lists contradictions found within each snapshot (selftest
-conflicts F1 1.0, resolution 1.0; 19 conflicts on the public snapshots).
+Official command from a fresh clone, rules only (no key): final **0.895**, 0 errors, 0 stale-value hits,
+p95 0.02 s, ingest 23 s. With `OPENAI_API_KEY`: public mean item score 0.921, p95 ~1.7–2.1 s, ingest
+~50 s. Selftest (`harness/selftest`, a different site) 1.0. `conflicts()` returns 18 entries on the
+public snapshots. Answers are deterministic: identical across runs and Python hash seeds.
 
-Local results (no judge), mean item score: public 0.884, our dev set 1.000, our rewordings 0.972, our
-probe questions 0.933; selftest final 1.0. Public official final 0.871 with the key (p50 0.4 s, p95
-~2.0–2.2 s), 0.859 mean without the key (p95 0.1 s). Ingest 40–90 s with embeddings.
+Nothing is keyed to the practice questions or to this website. Page types come from general URL
+conventions, the organisation's name is learned from the snapshots' domain and titles, product names
+and abbreviations from the pages; word lists are general English and banking grammar.
 
-## Approach
+## How it works
 
-`build()` returns a `KnowledgeSystem` (`solution.py`) that defines exactly the three contract methods:
-`ingest(snapshot)`, `answer(question, as_of=None)` and `conflicts()`. Each hands the call to
-`knowledge.pipeline.Pipeline`; the `knowledge/` package holds its parts (`ingest/`, `facts/`, `query/`,
-`answering/`, `llm/`, `conflicts.py`, shared helpers in `text.py`).
+`build()` returns a `KnowledgeSystem` (`solution/solution.py`) with exactly the three contract methods;
+each hands the call to `knowledge.pipeline.Pipeline`. Parts live in `solution/knowledge/`:
 
-`ingest(snapshot)` runs, per snapshot:
+| Folder | Role |
+|---|---|
+| `ingest/` | page store (every version of every page, URL variants merged, pages split into blocks, boilerplate flagged), page classifier (page type, publish / "rates effective" / end dates, "offer has ended"), fact extractor (rate tables, labelled lines, rates in prose → `product + attribute + qualifiers = value`, each with its quote) |
+| `facts/` | fact history (every sighting: page, snapshot, type, dates), resolver (which sighting is current), timeline (value per snapshot), standard statements (repeated count sentences, ordinal sentences) |
+| `query/` | question parser (intent, attribute, term, amount, model year, variant, business, dates) and the vocabulary learned from the site |
+| `answering/` | fact answers (rates, fees), "how many" answers, passage answers (search over the site's own text) |
+| `llm/` | optional gpt-4o-mini question reading and embeddings |
+| `conflicts.py`, `site.py`, `text.py` | conflict register, learned site name, shared text helpers |
 
-1. **Page store** (`ingest/store.py`): every version of every page; URLs normalised (query variants merged);
-   pages split into blocks with their heading path; blocks repeated on 10+ pages flagged as boilerplate.
-   A view of snapshot N shows each page's latest version up to N, marked present or carried forward.
-2. **Page classifier** (`ingest/classify.py`, rules): page type from URL structure, publish / "rates effective" /
-   end dates with quotes, "offer has ended" notices.
-3. **Fact extractor** (`ingest/extract.py`, rules): rate tables, comparison tables, labelled lines and rates in
-   prose become facts `product + attribute + qualifiers = value` (term, balance / loan tier, model year,
-   variant, business), each with its quote, table effective date and block end date. Every value is
-   checked against its quote.
-4. **Fact history** (`facts/history.py`): every sighting with page, snapshot, page type and dates.
-5. **Vocabulary** (`query/vocab.py`): product names, section words, page titles and the abbreviations the site
-   defines itself ("certificate (CD)") — learned from the snapshots, no hand-written synonyms.
-6. **Passage index** (`answering/passages.py`): short chunks of every block (a label with its short lines stays one
-   chunk), BM25 postings, and — with an OpenAI key — `text-embedding-3-small` vectors.
+**`ingest(snapshot)`** stores and classifies the new pages, extracts facts, indexes passages (plus
+embeddings with a key), collects standard statements and records the contradictions of that snapshot.
 
-`answer(question, as_of)` — hybrid:
+**`answer(question, as_of)`** picks the snapshot view (the latest snapshot on or before `as_of`, or a
+date named in the question; `as_of` may be a date object, `yyyy-mm`, `yyyy` or a written date), then:
+1. **Rates and fees** come only from extracted facts, resolved by the rules below. A rate the site
+   doesn't publish is refused with no number; one listed earlier but gone now is "not listed anymore".
+2. **"How many" questions** use the newest dated version of the site's standard sentence
+   ("It has over 600 employees and 22 branch office locations") or, for "how many times / years", the
+   newest ordinal sentence ("the fifth time Forbes recognized…"), if it covers the question's words.
+3. **Everything else** (hours, addresses, programs, events) is answered from the site's own passages
+   via BM25 (+ embeddings), with the evidence the question needs (a time, an address, a count, every
+   name asked). Hours asked without a branch say they vary and list each distinct schedule once.
+4. **Hybrid:** if the rules are not confident, gpt-4o-mini reads the question (route, product,
+   qualifiers, which sentences answer it). The answer is still built by code from the site's values and
+   sentences; the LLM never writes answer text, and it overrides the rules only when it adds something.
 
-0. The rules path below runs first. If it is confident (an exact site-wide fact, a rate with a strong
-   product match covering every term asked, or a passage covering most of the question with the needed
-   evidence) its answer is returned. Otherwise **gpt-4o-mini** (`llm/understand.py`) reads the question in
-   one compact JSON call: route (rate fact / passage / not on the site), products chosen only from a
-   candidate list of real product keys, attribute, terms, model year, amount, variants, intent, and the
-   ids of the numbered passage sentences that answer it (short reply = fast call, ~1.2 s). The answer
-   is still built by code from facts and the site's own sentences, with the same evidence checks. The
-   LLM may only override the rules when it adds something: an LLM refusal does not replace a rules
-   answer found on real evidence (a rate fact, or a passage containing the question's own words), only
-   one that was merely close in meaning; a narrower product list than the rules gave does not replace
-   theirs; a rules refusal with a concrete reason (variant not offered, product discontinued) is final;
-   an LLM product pick is rejected if the question names a product word it doesn't carry. Every OpenAI
-   call has an enforced deadline (chat 2.5 s); on failure the rules answer stands.
-1. **Parse** (`query/question.py`, rules): intent (list, highest / lowest, yes-no, URL, past, change, still
-   available), attribute (incl. hours / address wording), qualifiers (term, amount, model year, variant,
-   business), dates named in the question.
-2. **View**: latest snapshot on or before `as_of` (or a date in the question); before the first snapshot
-   → refusal.
-3. **Fact path** (`answering/facts.py`): products matched against the vocabulary (with a per-view quality prior),
-   fact keys whose qualifiers fit, each resolved by the **resolver** (`facts/resolve.py`) in a fixed order:
-   end date passed / offer ended → out; not yet effective → reported as upcoming; source authority per
-   attribute class; content date; present over carried forward; newer snapshot; rate sheet first; value
-   stated by more pages; extractor. Values compare as numbers. Tier rules: menus list every row, tiered
-   products lead with the base tier, a named tier / "highest" picks that row. Rejected values go to
-   `conflict_note`, never into the text. A rate question with no matching fact is refused (no numbers);
-   if the fact was listed in an earlier snapshot the answer says it isn't listed anymore. "What changed"
-   questions are answered from the fact timeline.
-4. **Passage path** (`answering/passages.py`): hybrid BM25 + embedding search inside the view, weighted by page
-   type, presence and recency; the evidence a question needs must be in the passage (a time for hours, a
-   street address, a URL, a year for "when", a count for "how many", every specific name in the
-   question). Extractive answer from the best passages; refusal when nothing qualifies.
-5. Answers are cached per (question, as_of).
+**`conflicts()`** lists two pages online in the same snapshot that state different values for the same
+fact (same product, attribute, term, variants, account type, overlapping tier). Winner and reason come
+from the same resolver as `answer()`. Standard count sentences whose pages disagree are listed too,
+newest dated page winning. A value that changes between snapshots is an update, not a contradiction.
 
-**Fact timeline** (`facts/timeline.py`) gives each fact's value per snapshot as periods (for "what was it in
-May").
+## What "current" means
 
-**Conflicts** (`conflicts.py`), computed per snapshot at ingest. A contradiction is two pages online at
-the same time (same snapshot) stating different values for the same fact; a value that simply changes
-from one snapshot to the next is an update and is not listed.
-- Rates and fees: same attribute, term, variants and account type; product names where one contains
-  the other ("auto loan" / "auto & motorcycle loan"); tier or model-year bands equal, or the most
-  overlapping band when a page uses shifted bands (a calculator's "2023–26" vs the rate sheet's
-  "2024–27"). The winner and reason come from the same resolver as `answer()`. Pages saying an offer
-  has ended count as out of date. One entry per topic (product + attribute + term + variants); tiers and
-  snapshots fold into it.
-- Counts in standard paragraphs repeated across press releases ("over 600 employees and 23 branch office
-  locations"): versions of the same paragraph with different numbers; the newest page wins.
+Applied in this order when sightings of one fact disagree:
+
+1. **Qualifiers first.** Different term, tier, model year, variant (jumbo, special) or personal vs
+   business are different facts, never conflicts. Rate vs APY are different attributes.
+2. **Ended is out.** A passed end date ("offer ends June 30") or an "offer has ended" notice removes the
+   sighting; a not-yet-effective rate is reported as upcoming.
+3. **Authority by page type.** For rates: rate sheet and product pages > info > promo > calculator >
+   newsroom > article > document. For contact details: info pages first. A calculator, PDF or old blog
+   post never beats the rates page.
+4. **Newer content date.** The table's "rates effective" date, else the page's publish date.
+5. **Present beats carried forward.** A page missing from the latest pull is still visible, but loses to
+   one that is present.
+6. **Newer snapshot**, then **rate sheet first**, then **the value more pages state**.
+7. **Counts and ordinals in press releases:** the newest dated statement wins; older releases keep old
+   numbers.
+8. **Not on the site → "I don't know."** No matching fact or passage means `confident=False` and a
+   "please contact" answer, never a guess.
+
+Values that lost are named in `conflict_note`, never in the answer text.
 
 ## API keys
 
-- `OPENAI_API_KEY` (optional, paid API). Read from the environment, else from a `.env` file next to or
-  above the submission. Used for `text-embedding-3-small` (product and passage retrieval, at ingest and
-  one call per question) and `gpt-4o-mini` (question understanding for questions the rules are not sure
-  about). The LLM never writes answer text; answers are always the site's own values and sentences.
+- `OPENAI_API_KEY` (optional, **paid API**). Read from the environment, else from a `.env` file next to
+  or above the submission. Used for `text-embedding-3-small` (retrieval) and `gpt-4o-mini` (reading
+  questions the rules are unsure about). Every call has a deadline; on failure the rules answer stands.
 - Without the key, or without the `openai` / `numpy` packages, everything runs rules-only.
 
 ## Running
 
 ```bash
+pip install -r requirements.txt
 python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
 ```
 
-Dev tools (not used by the solution): `tools/ask.py` (answers with parse and score per question),
-`tools/questions.jsonl` (our own 47 questions), `tools/paraphrases.jsonl` (our rewordings of the public
-questions), `tools/probes.jsonl` (hard new wordings), `tools/score_all.py` (all sets with latency).
-Issues found while testing are logged in `docs/ISSUES.md`.
+Dev tools (not used by the solution): `tools/score_all.py` (all question sets with latency, `--no-llm`
+for rules only), `tools/ask.py` (answers with parse and score per question), and our own question sets
+`tools/questions.jsonl`, `tools/paraphrases.jsonl` (rewordings of the public questions) and
+`tools/probes.jsonl` (new wordings, as-of forms, counts). Issues found while testing are in
+`docs/ISSUES.md`.
