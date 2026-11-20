@@ -23,3 +23,7 @@
 {"id": "pr-023", "category": "temporal_as_of", "question": "What was the rate on the 10-month fixed jumbo special certificate?", "as_of": "2026-05-31T12:00:00Z", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
 {"id": "pr-024", "category": "stale_trap", "question": "How many years in a row has Dupaco paid a participation dividend?", "must_include": ["eighth"], "must_not_include": ["seventh", "sixth"]}
 {"id": "pr-025", "category": "stale_trap", "question": "How many times has Forbes recognized Dupaco?", "must_include": ["fifth"], "must_not_include": ["fourth"]}
+{"id": "pr-026", "category": "temporal_change", "question": "Did the 60-month auto loan rate change between June and September?", "must_include": ["5.39%"], "must_not_include": ["no change, 5.39%"]}
+{"id": "pr-027", "category": "current_value", "question": "What is Dupaco's phone number?", "must_include": ["800-373-7600"]}
+{"id": "pr-028", "category": "temporal_as_of", "question": "What was the 30-year fixed mortgage APR in June 2026?", "must_include": ["6.256%"], "must_not_include": ["5.196%"]}
+{"id": "pr-029", "category": "current_value", "question": "What new loan products were added recently?", "must_include": ["launch"], "must_not_include": ["Trade-in value"]}

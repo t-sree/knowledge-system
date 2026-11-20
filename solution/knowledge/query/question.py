@@ -48,6 +48,9 @@ _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
 
 _MONTHS = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
 _MONTHS.update({m.lower(): i for i, m in enumerate(calendar.month_abbr) if m})
+# Full month names are dates, never product words ("between June and September"); abbreviations are
+# left alone ("apr" is the APR).
+_MONTH_WORDS = {m.lower() for m in calendar.month_name if m}
 _MONTH_YEAR = re.compile(r"\b(" + "|".join(sorted(_MONTHS, key=len, reverse=True)) + r")\.?\s+(\d{1,2},?\s+)?((?:19|20)\d{2})\b", re.I)
 _YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 _MONEY = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(k|thousand)?", re.I)
@@ -190,7 +193,7 @@ def parse(question: str, vocab) -> Query:
     content = []
     for w in raw:                      # stop words are checked before singularising ("does" != "doe")
         if (w in _STOP or w in _ATTRIBUTE_WORDS or w in _QUALIFIER_WORDS or w in variant_words or w in date_words
-                or w.isdigit() or len(w) < 2 or w == "business"):
+                or w in _MONTH_WORDS or w.isdigit() or len(w) < 2 or w == "business"):
             continue
         sw = singular(w)
         if sw in _STOP or sw in _ATTRIBUTE_WORDS or sw in _QUALIFIER_WORDS:

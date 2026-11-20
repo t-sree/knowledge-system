@@ -34,6 +34,7 @@ ATTR_LABEL = {"apy": "APY", "apr": "APR", "dividend_rate": "dividend rate", "rat
               "min_balance": "minimum balance", "max_balance": "maximum balance", "fee": "fee",
               "routing_number": "routing number", "phone": "phone number", "address": "address"}
 MIN_SCORE = 0.5
+FIT_MARGIN = 0.1        # name-match scores this close count as equal; the product with the asked term wins
 MIN_SCORE_NARROWED = 0.3
 MAX_ROWS = 30
 
@@ -169,6 +170,24 @@ class FactAnswerer:
             return LOAN_PAIR
         return ()
 
+    @staticmethod
+    def _prefer_fitting(q, scored, vidx):
+        """Among names that match about equally well (within FIT_MARGIN of the best), a product that
+        publishes the asked term and variants beats one that doesn't: "30-year fixed mortgage" is the home
+        loan with 30-year fixed rows, not a "Mortgage Relief Program" without terms."""
+        if not scored or not (q.term or q.variants):
+            return scored
+
+        def fits(p):
+            keys = [dict(k[2]) for k in vidx if k[0] == p]
+            term_ok = not q.term or any(d.get("term") == q.term for d in keys)
+            variant_ok = not q.variants or any(q.variants <= set(d.get("variant", ())) for d in keys)
+            return term_ok and variant_ok
+        near = [x for x in scored if x[0] >= scored[0][0] - FIT_MARGIN]
+        if fits(near[0][1]) or not any(fits(x[1]) for x in near):
+            return scored
+        return [x for x in scored if x not in near or fits(x[1])]
+
     # ================================================================== entry point
     def answer(self, q, index: int, ref_date: str, snapshot_date: str, past: bool) -> Optional[Answer]:
         R = self.ks.resolver
@@ -199,6 +218,21 @@ class FactAnswerer:
                     and self._compatible(q, dict(k[2]), set(), True)]
             if keys:
                 return self._compose_simple(keys, index, ref_date, past, snapshot_date)
+        if not rate_question and not q.content and not self.ks.passage_answerer._names(q):
+            # "What is your phone number?" names nothing: the value that most present pages state
+            # (at least two) is the organisation's own, whatever heading it was found under.
+            pages: dict[str, set] = {}
+            for k, vss in vidx.items():
+                if k[1] == q.attribute:
+                    for vs in vss:
+                        if vs.present and any(ch.isdigit() for ch in vs.sighting.fact.value):
+                            pages.setdefault(vs.sighting.fact.value, set()).add(vs.sighting.page_key)
+            if pages:
+                value = max(sorted(pages), key=lambda v: len(pages[v]))
+                if len(pages[value]) >= 2:
+                    keys = [k for k, vss in vidx.items() if k[1] == q.attribute
+                            and any(vs.sighting.fact.value == value for vs in vss)]
+                    return self._compose_simple(keys, index, ref_date, past, snapshot_date)
 
         min_score = MIN_SCORE
         if q.products:
@@ -213,6 +247,7 @@ class FactAnswerer:
                 if narrowed:
                     scored = self.score_products(q, narrowed, index)
                     min_score = MIN_SCORE_NARROWED
+        scored = self._prefer_fitting(q, scored, vidx)
         if not scored or scored[0][0] < min_score:
             return None
         best = scored[0][0]
@@ -446,8 +481,12 @@ class FactAnswerer:
             label = ATTR_LABEL.get(attr, attr)
             if len(periods) == 1:
                 pr = periods[0]
-                lines.append(f"{name}: no change, {self._fmt_value(attr, pr.value)} in every snapshot from "
-                             f"{_fmt_date(pr.first_date)} to {_fmt_date(pr.last_date)}")
+                if pr.first_date > self.ks.store.snapshots[0].taken_on:
+                    # first listed in a later snapshot (a new row, or a renamed one): no history to compare
+                    lines.append(f"{name}: {self._fmt_value(attr, pr.value)}, listed since {_fmt_date(pr.first_date)}")
+                else:
+                    lines.append(f"{name}: no change, {self._fmt_value(attr, pr.value)} in every snapshot from "
+                                 f"{_fmt_date(pr.first_date)} to {_fmt_date(pr.last_date)}")
             else:
                 steps = []
                 for i, pr in enumerate(periods):

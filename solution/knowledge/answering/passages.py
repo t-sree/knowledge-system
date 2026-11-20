@@ -363,6 +363,10 @@ _ATTR_WORDS = {"hours": ("hours", "hour", "open", "opening", "close", "closing",
 # A block opening with a bold label starts a new section ("**Drive-up** Monday-Friday: 8 a.m.-6 p.m.").
 _SECTION_START = re.compile(r"^\s*(?:\*\*|__)[^*_\n]{1,40}(?:\*\*|__)")
 _URL = re.compile(r"https?://|\bwww\.|\b[a-z0-9-]+\.(?:com|org|net)\b", re.I)
+# "What was added / launched recently?" is answered only by a passage that announces something new.
+_NOVELTY_Q = re.compile(r"\b(?:added|launched|introduced|what'?s new|anything new)\b", re.I)
+_NOVELTY = re.compile(r"\b(?:launch(?:es|ed|ing)|introduc(?:es|ed|ing)|now offers?|now available|unveil(?:s|ed))\b",
+                      re.I)
 _COMPARE = re.compile(r"\b(same|different|differ|vary|varies|all)\b", re.I)
 _HOW_MANY = re.compile(r"\bhow many\b|\bnumber of\b", re.I)
 
@@ -445,6 +449,9 @@ class PassageAnswerer:
             pattern_words |= {stem(w) for w in _ATTR_WORDS.get(attr, ())}
         if "url" in q.intents:
             pattern_words |= {stem(w) for w in ("url", "link", "website", "page", "webpage")}
+        if _NOVELTY_Q.search(q.text):
+            # "added recently" asks for an announcement (checked as evidence), not for those words
+            pattern_words |= {stem(w) for w in ("added", "launched", "introduced", "new")}
         query = [t for t in dict.fromkeys(words) if t not in pattern_words]
         return query, pattern_words
 
@@ -454,17 +461,15 @@ class PassageAnswerer:
         self.last_coverage = 0.0
         self.last_meaning_only = False
         self.last_varied = False
-        query, _ = self.query_tokens(q)
+        query, pattern_words = self.query_tokens(q)
+        if not query and (q.attribute or "") in EVIDENCE:
+            # "What is your phone number?" names nothing but the attribute: search for its own words
+            # ("phone", "call"); the pattern check below still requires an actual number in the passage.
+            query = sorted(pattern_words)
         counting = bool(_HOW_MANY.search(q.text))
         # Evidence a chunk must contain for this kind of question: a time, an address, a phone number,
         # a URL, a year for "when" questions, a count for "how many" questions.
-        evidence = []
-        if (q.attribute or "") in EVIDENCE:
-            evidence.append(EVIDENCE[q.attribute])
-        if "url" in q.intents:
-            evidence.append(_URL)
-        if re.match(r"\s*when\b", q.text, re.I) and (q.attribute or "") not in EVIDENCE:
-            evidence.append(_WHEN)
+        evidence = self._evidence(q)
         qset = set(query)
         strict = counting or bool(evidence)
 
@@ -541,13 +546,7 @@ class PassageAnswerer:
         groups = [(t, self._alts.get(t, set())) for t in query if t not in expansions or t in self._alts]
         qvec = self.ks._question_vector(q.text)
         out = idx.search(query, index, k=n, qvec=qvec, groups=groups)
-        evidence = []
-        if (q.attribute or "") in EVIDENCE:
-            evidence.append(EVIDENCE[q.attribute])
-        if "url" in q.intents:
-            evidence.append(_URL)
-        if re.match(r"\s*when\b", q.text, re.I) and (q.attribute or "") not in EVIDENCE:
-            evidence.append(_WHEN)
+        evidence = self._evidence(q)
         counting = bool(_HOW_MANY.search(q.text))
         if evidence or counting:
             qset = set(query)
@@ -565,13 +564,7 @@ class PassageAnswerer:
         idx: PassageIndex = self.ks.passages
         names = self._names(q)
         rarest = max(names, key=idx.idf) if names else None
-        evidence = []
-        if (q.attribute or "") in EVIDENCE:
-            evidence.append(EVIDENCE[q.attribute])
-        if "url" in q.intents:
-            evidence.append(_URL)
-        if re.match(r"\s*when\b", q.text, re.I) and (q.attribute or "") not in EVIDENCE:
-            evidence.append(_WHEN)
+        evidence = self._evidence(q)
         counting = bool(_HOW_MANY.search(q.text))
         qset = set(query)
 
@@ -658,6 +651,21 @@ class PassageAnswerer:
         # same-page chunks in page order
         n_same = 1 + (same is not None)
         return sorted(picks[:n_same], key=lambda r: r[4]) + picks[n_same:]
+
+    @staticmethod
+    def _evidence(q) -> list:
+        """Patterns a passage must contain for this kind of question: a time, an address, a phone number,
+        a URL, a year for "when" questions, an announcement for "what was added / launched recently"."""
+        evidence = []
+        if (q.attribute or "") in EVIDENCE:
+            evidence.append(EVIDENCE[q.attribute])
+        if "url" in q.intents:
+            evidence.append(_URL)
+        if re.match(r"\s*when\b", q.text, re.I) and (q.attribute or "") not in EVIDENCE:
+            evidence.append(_WHEN)
+        if _NOVELTY_Q.search(q.text):
+            evidence.append(_NOVELTY)
+        return evidence
 
     @staticmethod
     def _names(q) -> list[str]:
