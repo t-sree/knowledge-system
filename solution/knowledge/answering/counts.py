@@ -48,7 +48,7 @@ class CountAnswerer:
                 stmts = [s for s in stmts if rarest in s.words]
             ranked = sorted((s for s in stmts if self._coverage(query, s.words) >= MIN_COVERAGE),
                             key=lambda s: (s.date, self._coverage(query, s.words)), reverse=True)
-            return self._answer(ranked[0], past, snapshot_date) if ranked and query else None
+            return self._answer(ranked[0], past, snapshot_date, ranked[1:]) if ranked and query else None
         if not query:
             return None
         stmts = [s for s in self.ks.statements.by_view.get(index, ()) if s.date <= ref_date]
@@ -66,10 +66,10 @@ class CountAnswerer:
                 continue                         # the question asks about more than this sentence says
             score = (len(noun_words & query), coverage, win.date)
             if best is None or score > best[0]:
-                best = (score, win)
+                best = (score, win, ranked[1:])
         if best is None:
             return None
-        return self._answer(best[1], past, snapshot_date)
+        return self._answer(best[1], past, snapshot_date, best[2])
 
     def _coverage(self, query: set, words) -> float:
         """Share of the question's words (idf-weighted) that `words` contains."""
@@ -78,10 +78,17 @@ class CountAnswerer:
         return sum(idf(t) for t in query & words) / total if total else 0.0
 
     @staticmethod
-    def _answer(win, past: bool, snapshot_date: str):
+    def _answer(win, past: bool, snapshot_date: str, older=()):
         from contract import Answer, Source
         when = f" ({_fmt_date(win.date)})" if win.date else ""
         prefix = f"As of {_fmt_date(snapshot_date)}, " if past else ""
         text = f'{prefix}{SITE.name}\'s most recent statement{when} says: "{win.sentence}"'
+        # the older values set aside, for conflict_note (never in the text)
+        seen, notes = {win.value}, []
+        for s in older:
+            if s.value not in seen and len(notes) < 3:
+                seen.add(s.value)
+                notes.append(f"{s.value} ({_fmt_date(s.date) or 'undated'}, {s.url})")
+        note = f"newest statement {win.value} ({win.url}); older pages say " + "; ".join(notes) if notes else None
         return Answer(text=text, sources=[Source(url=win.url, snapshot_id=win.snapshot_id, quote=win.sentence[:200])],
-                      confident=True)
+                      confident=True, conflict_note=note)

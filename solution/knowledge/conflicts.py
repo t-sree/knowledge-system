@@ -24,9 +24,9 @@ from knowledge.facts.history import ViewSighting
 from knowledge.facts.resolve import resolve, same_value
 from knowledge.site import SITE
 
-HEADLINE_ATTRS = ("apy", "apr", "rate", "fee")
+HEADLINE_ATTRS = ("apy", "apr", "rate", "dividend_rate", "fee")
 _RANGE_QUALS = ("balance_tier", "loan_amount", "model_year")
-_ATTR_LABEL = {"apy": "APY", "apr": "APR", "rate": "interest rate", "fee": "fee"}
+_ATTR_LABEL = {"apy": "APY", "apr": "APR", "rate": "interest rate", "dividend_rate": "dividend rate", "fee": "fee"}
 _LOW_AUTHORITY = {"article", "newsroom"}
 MAX_VALUES = 8
 
