@@ -7,3 +7,5 @@ snapshots/0*/
 .venv/
 snapshots_zip/
 *.zip
+snapshots/
+Knowledge-Hackathon-Assignment.pdf
