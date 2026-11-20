@@ -5,3 +5,5 @@ __pycache__/
 .env
 snapshots/0*/
 .venv/
+snapshots_zip/
+*.zip

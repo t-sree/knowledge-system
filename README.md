@@ -1,5 +1,10 @@
 # Hackathon: Build a Knowledge System That Knows What's True *Now*
 
+> **This repository:** our solution is in `solution/`; how it works, the rules for what is "current", key
+> decisions and API keys are in [`NOTES.md`](NOTES.md). The website snapshots are **not included**
+> (shared for the event only): copy the kit's `snapshots_zip/` into the repository root before running
+> `python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl`.
+
 ## The problem in one minute
 
 Our assistant answers credit-union members' questions ("What's the 6-month certificate rate?", "How much is a lost debit card?") using the credit union's own website.

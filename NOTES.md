@@ -109,6 +109,10 @@ Values that lost are named in `conflict_note`, never in the answer text.
 
 ## Running
 
+The website snapshots are not in this repository (they were shared for the event only). Copy the kit's
+`snapshots_zip/` folder (the five zips) into the repository root first; the scorer unpacks them on the
+first run.
+
 ```bash
 pip install -r requirements.txt
 python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
